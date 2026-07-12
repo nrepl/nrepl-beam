@@ -50,4 +50,9 @@
 %% e.g. #{<<"erlang">> => #{<<"version-string">> => <<"27.2">>}}.
 -callback version_info() -> #{binary() => map()}.
 
--optional_callbacks([load_file/3, complete/3, lookup/3, format_exception/4]).
+%% Options applied to the session's IO device at creation, e.g.
+%% [{binary, true}] for languages whose IO expects binaries (Elixir).
+-callback io_opts() -> [{atom(), term()}].
+
+-optional_callbacks([load_file/3, complete/3, lookup/3, format_exception/4,
+                     io_opts/0]).

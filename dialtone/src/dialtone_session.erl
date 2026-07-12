@@ -59,6 +59,10 @@ init({Id, {BMod, BOpts} = Backend, InitialBState, Ephemeral}) ->
                      Inherited
              end,
     {ok, Io} = dialtone_io_server:start_link(),
+    case erlang:function_exported(BMod, io_opts, 0) of
+        true -> ok = io:setopts(Io, BMod:io_opts());
+        false -> ok
+    end,
     {ok, #session{id = Id, backend = Backend, bstate = BState,
                   io = Io, ephemeral = Ephemeral}}.
 

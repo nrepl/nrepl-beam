@@ -5,7 +5,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, new/2, lookup/1, list/0, close/1]).
+-export([start_link/0, new/2, lookup/1, list/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
 -define(TAB, ?MODULE).
@@ -29,14 +29,6 @@ lookup(Id) ->
 -spec list() -> [binary()].
 list() ->
     [Id || {Id, _Pid} <- ets:tab2list(?TAB)].
-
-%% @doc Close a session, tearing down any in-flight work. Idempotent.
--spec close(binary()) -> ok.
-close(Id) ->
-    case lookup(Id) of
-        {ok, Pid} -> dialtone_session:close(Pid);
-        error -> ok
-    end.
 
 init([]) ->
     ?TAB = ets:new(?TAB, [named_table, protected, {read_concurrency, true}]),

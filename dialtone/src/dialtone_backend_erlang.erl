@@ -11,7 +11,7 @@
 
 -behaviour(dialtone_backend).
 
--export([init/1, eval/3, version_info/0]).
+-export([init/1, eval/3, load_file/3, version_info/0]).
 
 init(_Opts) ->
     {ok, #{bindings => erl_eval:new_bindings()}}.
@@ -34,6 +34,70 @@ eval(Code, Meta, #{bindings := Bindings} = State) ->
         {error, {Loc, Mod, Desc}, _} ->
             {error, syntax_error(Loc, Mod, Desc), State}
     end.
+
+%% A module source (leading -module attribute) is compiled with debug_info
+%% and hot-loaded, attributed to its client-side path so stack traces and
+%% jump-to-definition point at the real file. Anything else (scratch
+%% buffers, expression files) is evaluated like eval.
+load_file(Contents, Meta, State) ->
+    Path = maps:get(path, Meta, maps:get(name, Meta, <<"nrepl-load-file">>)),
+    Str = unicode:characters_to_list(Contents),
+    case erl_scan:string(Str) of
+        {ok, Tokens, EndLoc} ->
+            Forms = split_dots(ensure_dot(Tokens, EndLoc)),
+            case is_module_source(Forms) of
+                true -> compile_module(Forms, Path, State);
+                false -> eval(Contents, #{file => Path}, State)
+            end;
+        {error, {Loc, Mod, Desc}, _} ->
+            {error, syntax_error(Loc, Mod, Desc), State}
+    end.
+
+is_module_source([FirstForm | _]) ->
+    case erl_parse:parse_form(FirstForm) of
+        {ok, {attribute, _, module, _}} -> true;
+        _ -> false
+    end;
+is_module_source([]) ->
+    false.
+
+compile_module(TokenForms, Path, State) ->
+    case parse_module_forms(TokenForms, []) of
+        {ok, Forms} ->
+            PathStr = unicode:characters_to_list(Path),
+            Opts = [return_errors, return_warnings, debug_info,
+                    {source, PathStr}],
+            case compile:forms(Forms, Opts) of
+                {ok, Mod, Bin, _Warnings} ->
+                    {module, Mod} = code:load_binary(Mod, PathStr, Bin),
+                    {ok, #{value => io_lib:format("{module, ~tp}", [Mod])}, State};
+                {error, Errors, _Warnings} ->
+                    {error, #{err => format_compile_errors(Errors),
+                              ex => <<"compile-error">>}, State}
+            end;
+        {error, ErrResult} ->
+            {error, ErrResult, State}
+    end.
+
+parse_module_forms([], Acc) ->
+    {ok, lists:reverse(Acc)};
+parse_module_forms([FormTokens | Rest], Acc) ->
+    case erl_parse:parse_form(FormTokens) of
+        {ok, Form} -> parse_module_forms(Rest, [Form | Acc]);
+        {error, {Loc, Mod, Desc}} -> {error, syntax_error(Loc, Mod, Desc)}
+    end.
+
+format_compile_errors(Errors) ->
+    [[format_compile_error(File, Loc, Mod, Desc) || {Loc, Mod, Desc} <- Problems]
+     || {File, Problems} <- Errors].
+
+format_compile_error(File, Loc, Mod, Desc) ->
+    Where = case Loc of
+                {Line, Col} -> io_lib:format("~ts:~b:~b: ", [File, Line, Col]);
+                Line when is_integer(Line) -> io_lib:format("~ts:~b: ", [File, Line]);
+                _ -> io_lib:format("~ts: ", [File])
+            end,
+    [Where, Mod:format_error(Desc), $\n].
 
 version_info() ->
     OtpRelease = unicode:characters_to_binary(erlang:system_info(otp_release)),

@@ -156,13 +156,23 @@ ls_sessions(Req, State) ->
               State).
 
 %% close is idempotent: closing an unknown (or absent) session still answers
-%% done. The session tears down its own in-flight work before we reply.
+%% done. A live session tears down its own in-flight work and sends the done
+%% itself - routing close through the async request path like any other
+%% session op keeps message flow one-directional (conn never blocks on a
+%% session that might be blocking on the conn).
 close(Req, State) ->
     case maps:get(<<"session">>, Req, undefined) of
-        undefined -> ok;
-        Id -> dialtone_sessions:close(Id)
-    end,
-    send_self(dialtone_msg:response(Req, #{<<"status">> => [done]}), State).
+        undefined ->
+            send_self(dialtone_msg:response(Req, #{<<"status">> => [done]}), State);
+        Id ->
+            case dialtone_sessions:lookup(Id) of
+                {ok, Pid} ->
+                    dialtone_session:request(Pid, Req, self());
+                error ->
+                    send_self(dialtone_msg:response(Req, #{<<"status">> => [done]}),
+                              State)
+            end
+    end.
 
 route_to_session(#{<<"session">> := Id} = Req, State) ->
     case dialtone_sessions:lookup(Id) of

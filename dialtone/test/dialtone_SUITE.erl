@@ -30,6 +30,12 @@ all() ->
      concurrent_sessions,
      interrupt_running_eval,
      interrupt_idle_session,
+     interrupt_id_mismatch,
+     close_mid_eval,
+     load_file_module,
+     load_file_expressions,
+     load_file_compile_error,
+     malformed_frame_closes_connection,
      session_survives_disconnect,
      unicode_roundtrip,
      every_response_echoes_id_and_session,
@@ -263,6 +269,95 @@ interrupt_idle_session(Config) ->
     {[Resp], _} = dialtone_client:request(Client, #{<<"op">> => <<"interrupt">>,
                                                     <<"session">> => Session}),
     ?assertEqual([<<"session-idle">>, <<"done">>], maps:get(<<"status">>, Resp)).
+
+interrupt_id_mismatch(Config) ->
+    {Session, Client} = clone(?config(client, Config)),
+    Client2 = dialtone_client:send(Client, #{<<"op">> => <<"eval">>,
+                                             <<"id">> => <<"running">>,
+                                             <<"session">> => Session,
+                                             <<"code">> => <<"timer:sleep(60000).">>}),
+    timer:sleep(100),
+    {[Resp], Client3} = dialtone_client:request(
+                          Client2, #{<<"op">> => <<"interrupt">>,
+                                     <<"session">> => Session,
+                                     <<"interrupt-id">> => <<"not-running">>}),
+    ?assertEqual([<<"interrupt-id-mismatch">>, <<"done">>],
+                 maps:get(<<"status">>, Resp)),
+    %% clean up: interrupt for real
+    {_, Client4} = dialtone_client:request(Client3, #{<<"op">> => <<"interrupt">>,
+                                                      <<"session">> => Session}),
+    {_, _} = dialtone_client:recv_until_done(Client4, <<"running">>, 5000).
+
+close_mid_eval(Config) ->
+    {Session, Client} = clone(?config(client, Config)),
+    Client2 = dialtone_client:send(Client, #{<<"op">> => <<"eval">>,
+                                             <<"id">> => <<"doomed">>,
+                                             <<"session">> => Session,
+                                             <<"code">> => <<"timer:sleep(60000).">>}),
+    timer:sleep(100),
+    Client3 = dialtone_client:send(Client2, #{<<"op">> => <<"close">>,
+                                              <<"id">> => <<"closer">>,
+                                              <<"session">> => Session}),
+    {DoomedMsgs, Client4} = dialtone_client:recv_until_done(Client3, <<"doomed">>, 5000),
+    ?assert(lists:member(<<"interrupted">>, statuses_of(DoomedMsgs))),
+    {CloseMsgs, _} = dialtone_client:recv_until_done(Client4, <<"closer">>, 5000),
+    ?assertEqual([<<"done">>], statuses_of(CloseMsgs)).
+
+load_file_module(Config) ->
+    {Session, Client} = clone(?config(client, Config)),
+    Source = <<"-module(dialtone_ct_loaded).\n"
+               "-export([answer/0]).\n"
+               "answer() -> 42.\n">>,
+    {Msgs, Client2} = dialtone_client:request(
+                        Client, #{<<"op">> => <<"load-file">>,
+                                  <<"session">> => Session,
+                                  <<"file">> => Source,
+                                  <<"file-path">> => <<"/tmp/dialtone_ct_loaded.erl">>,
+                                  <<"file-name">> => <<"dialtone_ct_loaded.erl">>}),
+    ?assertEqual(<<"{module, dialtone_ct_loaded}">>, value_of(Msgs)),
+    {Msgs2, _} = eval(Client2, Session, <<"dialtone_ct_loaded:answer().">>),
+    ?assertEqual(<<"42">>, value_of(Msgs2)),
+    %% source attribution points at the client-side path
+    {Msgs3, _} = eval(?config(client, Config), Session,
+                      <<"proplists:get_value(source, "
+                        "dialtone_ct_loaded:module_info(compile)).">>),
+    ?assertEqual(<<"\"/tmp/dialtone_ct_loaded.erl\"">>, value_of(Msgs3)).
+
+load_file_expressions(Config) ->
+    {Session, Client} = clone(?config(client, Config)),
+    {Msgs, _} = dialtone_client:request(
+                  Client, #{<<"op">> => <<"load-file">>,
+                            <<"session">> => Session,
+                            <<"file">> => <<"A = 20, B = 22, A + B.">>}),
+    ?assertEqual(<<"42">>, value_of(Msgs)).
+
+load_file_compile_error(Config) ->
+    {Session, Client} = clone(?config(client, Config)),
+    Source = <<"-module(dialtone_ct_broken).\n"
+               "-export([boom/0]).\n"
+               "boom() -> NoSuchVar.\n">>,
+    {Msgs, _} = dialtone_client:request(
+                  Client, #{<<"op">> => <<"load-file">>,
+                            <<"session">> => Session,
+                            <<"file">> => Source,
+                            <<"file-path">> => <<"/tmp/dialtone_ct_broken.erl">>}),
+    ?assert(lists:member(<<"eval-error">>, statuses_of(Msgs))),
+    [ErrMsg] = [M || #{<<"err">> := _} = M <- Msgs],
+    ?assertEqual(<<"compile-error">>, maps:get(<<"ex">>, ErrMsg)),
+    ?assertMatch({_, _}, binary:match(maps:get(<<"err">>, ErrMsg), <<"unbound">>)).
+
+%% A malformed bencode stream is unrecoverable: the connection must close,
+%% but the server (and existing sessions) live on.
+malformed_frame_closes_connection(Config) ->
+    {Session, Client} = clone(?config(client, Config)),
+    #{sock := Sock} = Client,
+    ok = gen_tcp:send(Sock, <<"this is not bencode">>),
+    ?assertEqual({error, closed}, gen_tcp:recv(Sock, 0, 5000)),
+    Client2 = dialtone_client:connect(?config(port, Config)),
+    {[Ls], Client3} = dialtone_client:request(Client2, #{<<"op">> => <<"ls-sessions">>}),
+    ?assert(lists:member(Session, maps:get(<<"sessions">>, Ls))),
+    {Msgs, _} = eval(Client3, Session, <<"ok.">>),
+    ?assertEqual(<<"ok">>, value_of(Msgs)).
 
 session_survives_disconnect(Config) ->
     {Session, Client} = clone(?config(client, Config)),

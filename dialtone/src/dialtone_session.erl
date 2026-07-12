@@ -14,8 +14,12 @@
 
 -behaviour(gen_server).
 
--export([start_link/3, start_ephemeral/2, request/3, get_bstate/1, close/1]).
+-export([start_link/3, start_ephemeral/2, request/3, get_bstate/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
+
+%% Crude safety net against a multi-gigabyte value taking the editor down;
+%% a proper client-negotiated print quota can replace it later.
+-define(MAX_VALUE_BYTES, 8 * 1024 * 1024).
 
 -record(session, {id :: binary(),
                   backend :: {module(), map()},
@@ -46,10 +50,6 @@ request(Pid, Req, ReplyTo) ->
 get_bstate(Pid) ->
     gen_server:call(Pid, get_bstate, infinity).
 
--spec close(pid()) -> ok.
-close(Pid) ->
-    gen_server:call(Pid, close, infinity).
-
 init({Id, {BMod, BOpts} = Backend, InitialBState, Ephemeral}) ->
     BState = case InitialBState of
                  undefined ->
@@ -63,11 +63,12 @@ init({Id, {BMod, BOpts} = Backend, InitialBState, Ephemeral}) ->
                   io = Io, ephemeral = Ephemeral}}.
 
 handle_call(get_bstate, _From, State) ->
-    {reply, State#session.bstate, State};
-handle_call(close, _From, State) ->
-    interrupt_all(State),
-    {stop, normal, ok, State}.
+    {reply, State#session.bstate, State}.
 
+handle_cast({request, #{<<"op">> := <<"close">>} = Req, ReplyTo}, State) ->
+    interrupt_all(State),
+    dialtone_msg:reply_done(ReplyTo, Req, #{}),
+    {stop, normal, State#session{running = undefined, queue = queue:new()}};
 handle_cast({request, Req, ReplyTo}, State) ->
     {noreply, handle_request(maps:get(<<"op">>, Req), Req, ReplyTo, State)}.
 
@@ -99,6 +100,8 @@ handle_info(_Info, State) ->
 
 terminate(_Reason, State) ->
     interrupt_all(State),
+    %% The io server is linked, but a normal exit doesn't take it down.
+    try gen_server:stop(State#session.io) catch _:_ -> ok end,
     ok.
 
 %%% Request handling
@@ -204,7 +207,7 @@ eval_meta(Req) ->
 deliver_result(Req, ReplyTo, Result, #session{bstate = OldBState}) ->
     case Result of
         {ok, OkMap, NewBState} ->
-            Value = unicode:characters_to_binary(maps:get(value, OkMap)),
+            Value = truncate(unicode:characters_to_binary(maps:get(value, OkMap))),
             Extra = case OkMap of
                         #{ns := Ns} -> #{<<"ns">> => unicode:characters_to_binary(Ns)};
                         _ -> #{}
@@ -223,6 +226,12 @@ deliver_result(Req, ReplyTo, Result, #session{bstate = OldBState}) ->
                                     dialtone_err:to_wire(ErrMap)),
             OldBState
     end.
+
+truncate(Bin) when byte_size(Bin) > ?MAX_VALUE_BYTES ->
+    Head = binary:part(Bin, 0, ?MAX_VALUE_BYTES),
+    <<Head/binary, "... (value truncated by dialtone)">>;
+truncate(Bin) ->
+    Bin.
 
 next(#session{ephemeral = true, running = undefined} = State) ->
     %% One request served; this throwaway session is done.

@@ -35,15 +35,20 @@ prop_chunked_decode() ->
             end).
 
 %% A truncated message is always {more, _}, never an error or a bogus value.
+%% Checking every prefix is quadratic in message size and PropEr happily
+%% generates multi-KB values, so sample at most ~64 evenly-spread cut points
+%% (the exhaustive small-message check lives in the eunit suite).
 prop_truncation_is_more() ->
     ?FORALL(V, value(),
             begin
                 Encoded = iolist_to_binary(dialtone_bencode:encode(V)),
+                Size = byte_size(Encoded),
+                Step = max(1, Size div 64),
                 lists:all(fun(N) ->
                                   Prefix = binary:part(Encoded, 0, N),
                                   dialtone_bencode:decode(Prefix) =:= {more, Prefix}
                           end,
-                          lists:seq(0, byte_size(Encoded) - 1))
+                          lists:seq(0, Size - 1, Step))
             end).
 
 %% The decoder never crashes on arbitrary junk: any input yields ok/more/error.

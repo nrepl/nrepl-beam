@@ -34,6 +34,38 @@ jobs:
       - run: rebar3 xref
       - run: rebar3 dialyzer
 
+  chaser:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: chaser
+    strategy:
+      fail-fast: false
+      matrix:
+        otp: ['26', '27', '28']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ matrix.otp }}
+          rebar3-version: '3.25'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            chaser/_build
+            ~/.cache/rebar3
+          key: chaser-${{ runner.os }}-otp${{ matrix.otp }}-${{ hashFiles('chaser/rebar.config') }}
+      - run: rebar3 escriptize
+      - run: rebar3 eunit
+      - run: rebar3 ct
+      - run: rebar3 xref
+      - run: rebar3 dialyzer
+      - uses: actions/upload-artifact@v4
+        if: matrix.otp == '27'
+        with:
+          name: chaser-escript
+          path: chaser/_build/default/bin/chaser
+
   repartee:
     runs-on: ubuntu-latest
     defaults:

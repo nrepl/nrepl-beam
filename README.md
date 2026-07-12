@@ -20,9 +20,11 @@ Two packages live here:
   and a `mix repartee.server` task. A REPL's whole job is the instant witty
   reply, hence the name.
 
-A small terminal client (working title `chaser` - the drink names stay on
-the client side of the nREPL family, next to CIDER, Port and neat) is
-planned once the servers settle.
+- [`chaser/`](chaser/) - a terminal nREPL client, taken neat (the drink
+  names stay on the client side of the nREPL family, next to CIDER, Port
+  and neat). Language-agnostic: server-driven TAB completion, `:doc`
+  lookup, streamed output visually separated from results, and it works
+  in pipes. One escript, any nREPL server.
 
 ## Status
 
@@ -51,6 +53,10 @@ rebar3 xref             # cross-reference checks
 cd ../repartee
 mix test                # backend/completer/lookup units + full-stack tests
 mix format --check-formatted
+
+cd ../chaser
+rebar3 eunit            # input heuristics, rendering, completion shaping
+rebar3 ct               # client vs a real dialtone server + escript pipe test
 ```
 
 Start a server to poke at from an editor:
@@ -63,7 +69,8 @@ repartee/bin/repartee                  # Elixir, standalone (no project)
 
 All three print the standard `nREPL server started on port N ...`
 banner and write the port to `.nrepl-port`, so `M-x neat` (or any
-other nREPL client) can find them.
+other nREPL client) can find them. For a terminal client, run
+`chaser/bin/chaser` from anywhere below the `.nrepl-port` file.
 
 ### Running neat's integration suite against these servers
 

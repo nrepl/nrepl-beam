@@ -1,0 +1,8 @@
+#!/bin/sh
+# Development launcher: builds the chaser escript on first use and runs it.
+DIR="$(cd "$(dirname "$0")/.." && pwd)"
+ESCRIPT="$DIR/_build/default/bin/chaser"
+if [ ! -x "$ESCRIPT" ]; then
+    (cd "$DIR" && rebar3 escriptize >/dev/null) || exit 1
+fi
+exec "$ESCRIPT" "$@"

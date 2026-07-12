@@ -1,0 +1,8 @@
+{application, chaser,
+ [{description, "A terminal nREPL client, taken neat"},
+  {vsn, "0.1.0"},
+  {registered, []},
+  {applications, [kernel, stdlib, dialtone]},
+  {env, []},
+  {licenses, ["Apache-2.0"]},
+  {links, [{"GitHub", "https://github.com/nrepl/nrepl-beam"}]}]}.

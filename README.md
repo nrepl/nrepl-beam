@@ -1,5 +1,7 @@
 # nREPL on the BEAM
 
+[![CI](https://github.com/nrepl/nrepl-beam/actions/workflows/ci.yml/badge.svg)](https://github.com/nrepl/nrepl-beam/actions/workflows/ci.yml)
+
 > operator: "number, please"
 
 nREPL servers for Erlang and Elixir, built to follow the

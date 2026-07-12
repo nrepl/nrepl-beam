@@ -1,15 +1,18 @@
 %% @private The killable evaluation process. Gets a snapshot of the backend
-%% state, runs exactly one eval/load-file, and mails the outcome (including
-%% the successor state) back to its session. Because the session never hands
-%% out its state mutably, exit(Worker, kill) is always safe.
+%% state, runs exactly one eval/load-file with the session's IO device as
+%% group leader (so all io output streams to the client), and mails the
+%% outcome (including the successor state) back to its session. Because the
+%% session never hands out its state mutably, exit(Worker, kill) is always
+%% safe.
 -module(dialtone_worker).
 
--export([run/5]).
+-export([run/6]).
 
 -spec run(pid(), reference(),
           {eval, binary(), map()} | {load_file, binary(), map()},
-          {module(), map()}, term()) -> ok.
-run(Session, Ref, Task, {BMod, _}, BState) ->
+          {module(), map()}, term(), pid()) -> ok.
+run(Session, Ref, Task, {BMod, _}, BState, Io) ->
+    true = group_leader(Io, self()),
     Result =
         try
             case Task of

@@ -20,6 +20,10 @@ all() ->
      runtime_error,
      unknown_op,
      missing_code,
+     stdout_streaming,
+     stdout_before_done,
+     stdin_roundtrip,
+     stdin_eof,
      ls_sessions_and_close,
      ephemeral_eval,
      clone_inherits_bindings,
@@ -64,6 +68,9 @@ value_of(Msgs) ->
 
 statuses_of(Msgs) ->
     lists:usort(lists:append([S || #{<<"status">> := S} <- Msgs])).
+
+out_of(Msgs) ->
+    iolist_to_binary([O || #{<<"out">> := O} <- Msgs]).
 
 %%% Cases
 
@@ -123,6 +130,60 @@ missing_code(Config) ->
     {Msgs, _} = dialtone_client:request(Client, #{<<"op">> => <<"eval">>,
                                                   <<"session">> => Session}),
     ?assert(lists:member(<<"eval-error">>, statuses_of(Msgs))).
+
+stdout_streaming(Config) ->
+    {Session, Client} = clone(?config(client, Config)),
+    {Msgs, _} = eval(Client, Session,
+                     <<"io:format(\"hello ~ts~n\", [\"света\"]), done."/utf8>>),
+    ?assertEqual(<<"hello света\n"/utf8>>, out_of(Msgs)),
+    ?assertEqual(<<"done">>, value_of(Msgs)).
+
+%% Output chunks must be on the wire before the value/done of their eval.
+stdout_before_done(Config) ->
+    {Session, Client} = clone(?config(client, Config)),
+    {Msgs, _} = eval(Client, Session,
+                     <<"[io:format(\"~b\", [N]) || N <- lists:seq(1, 5)], ok.">>),
+    LastOut = lists:max([I || {I, M} <- lists:enumerate(Msgs), maps:is_key(<<"out">>, M)]),
+    FirstValue = lists:min([I || {I, M} <- lists:enumerate(Msgs), maps:is_key(<<"value">>, M)]),
+    ?assert(LastOut < FirstValue),
+    ?assertEqual(<<"12345">>, out_of(Msgs)).
+
+stdin_roundtrip(Config) ->
+    {Session, Client} = clone(?config(client, Config)),
+    Client2 = dialtone_client:send(Client, #{<<"op">> => <<"eval">>,
+                                             <<"id">> => <<"reader">>,
+                                             <<"session">> => Session,
+                                             <<"code">> => <<"io:get_line(\"name? \").">>}),
+    %% collect until need-input shows up (the prompt arrives as out)
+    {NeedInput, Client3} = recv_until_status(Client2, <<"need-input">>, []),
+    ?assertEqual(<<"name? ">>, out_of(NeedInput)),
+    {StdinMsgs, Client4} = dialtone_client:request(
+                             Client3, #{<<"op">> => <<"stdin">>,
+                                        <<"session">> => Session,
+                                        <<"stdin">> => <<"Bozhidar\n">>}),
+    ?assertEqual([<<"done">>], statuses_of(StdinMsgs)),
+    {EvalMsgs, _} = dialtone_client:recv_until_done(Client4, <<"reader">>, 5000),
+    ?assertEqual(<<"\"Bozhidar\\n\"">>, value_of(EvalMsgs)).
+
+stdin_eof(Config) ->
+    {Session, Client} = clone(?config(client, Config)),
+    Client2 = dialtone_client:send(Client, #{<<"op">> => <<"eval">>,
+                                             <<"id">> => <<"reader">>,
+                                             <<"session">> => Session,
+                                             <<"code">> => <<"io:get_line(\"\").">>}),
+    {_, Client3} = recv_until_status(Client2, <<"need-input">>, []),
+    {_, Client4} = dialtone_client:request(Client3, #{<<"op">> => <<"stdin">>,
+                                                      <<"session">> => Session,
+                                                      <<"stdin">> => <<>>}),
+    {EvalMsgs, _} = dialtone_client:recv_until_done(Client4, <<"reader">>, 5000),
+    ?assertEqual(<<"eof">>, value_of(EvalMsgs)).
+
+recv_until_status(Client, Status, Acc) ->
+    {Msg, Client2} = dialtone_client:recv_msg(Client, 5000),
+    case lists:member(Status, maps:get(<<"status">>, Msg, [])) of
+        true -> {lists:reverse([Msg | Acc]), Client2};
+        false -> recv_until_status(Client2, Status, [Msg | Acc])
+    end.
 
 ls_sessions_and_close(Config) ->
     {Session, Client} = clone(?config(client, Config)),

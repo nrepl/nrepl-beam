@@ -20,6 +20,7 @@
 -record(session, {id :: binary(),
                   backend :: {module(), map()},
                   bstate :: term(),
+                  io :: pid(),
                   ephemeral = false :: boolean(),
                   running :: undefined
                            | #{req := map(), reply_to := pid(),
@@ -57,8 +58,9 @@ init({Id, {BMod, BOpts} = Backend, InitialBState, Ephemeral}) ->
                  Inherited ->
                      Inherited
              end,
+    {ok, Io} = dialtone_io_server:start_link(),
     {ok, #session{id = Id, backend = Backend, bstate = BState,
-                  ephemeral = Ephemeral}}.
+                  io = Io, ephemeral = Ephemeral}}.
 
 handle_call(get_bstate, _From, State) ->
     {reply, State#session.bstate, State};
@@ -74,6 +76,7 @@ handle_info({eval_result, Ref, Result},
                                  mref := MRef}} = State) ->
     %% Worker finished on its own; the DOWN that follows is uninteresting.
     demonitor(MRef, [flush]),
+    ok = dialtone_io_server:reset(State#session.io),
     NewBState = deliver_result(Req, ReplyTo, Result, State),
     next(State#session{running = undefined, bstate = NewBState});
 handle_info({'DOWN', MRef, process, _Pid, Reason},
@@ -81,6 +84,7 @@ handle_info({'DOWN', MRef, process, _Pid, Reason},
                                  reply_to := ReplyTo}} = State) ->
     %% Worker died without reporting a result: killed (interrupt) or took an
     %% exit we didn't catch (e.g. from a linked process). State unchanged.
+    ok = dialtone_io_server:reset(State#session.io),
     case Reason of
         killed ->
             dialtone_msg:reply_done(ReplyTo, Req, [interrupted], #{});
@@ -111,7 +115,9 @@ handle_request(Op, Req, ReplyTo, State)
     end;
 handle_request(<<"stdin">>, Req, ReplyTo, State) ->
     %% Out-of-band: never queued (an eval blocked on input would deadlock).
-    %% IO plumbing lands with the io server; until then input is discarded.
+    %% An empty payload signals EOF, anything else is buffered type-ahead.
+    ok = dialtone_io_server:stdin(State#session.io,
+                                  maps:get(<<"stdin">>, Req, <<>>)),
     dialtone_msg:reply_done(ReplyTo, Req, #{}),
     State;
 handle_request(<<"interrupt">>, Req, ReplyTo, State) ->
@@ -166,11 +172,14 @@ enqueue_or_run(Job, #session{running = undefined} = State) ->
 enqueue_or_run(Job, #session{queue = Q} = State) ->
     State#session{queue = queue:in(Job, Q)}.
 
-run({Req, ReplyTo}, #session{backend = Backend, bstate = BState} = State) ->
+run({Req, ReplyTo}, #session{backend = Backend, bstate = BState,
+                             io = Io} = State) ->
     Ref = make_ref(),
     Task = task(Req),
+    ok = dialtone_io_server:set_sink(Io, ReplyTo, Req),
     {Worker, MRef} =
-        spawn_monitor(dialtone_worker, run, [self(), Ref, Task, Backend, BState]),
+        spawn_monitor(dialtone_worker, run,
+                      [self(), Ref, Task, Backend, BState, Io]),
     State#session{running = #{req => Req, reply_to => ReplyTo,
                               worker => Worker, mref => MRef, ref => Ref}}.
 

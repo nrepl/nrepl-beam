@@ -36,6 +36,11 @@ all() ->
      load_file_expressions,
      load_file_compile_error,
      malformed_frame_closes_connection,
+     completions_functions,
+     completions_modules_and_vars,
+     lookup_function_docs,
+     lookup_loaded_module_function,
+     lookup_not_found,
      session_survives_disconnect,
      unicode_roundtrip,
      every_response_echoes_id_and_session,
@@ -358,6 +363,73 @@ malformed_frame_closes_connection(Config) ->
     ?assert(lists:member(Session, maps:get(<<"sessions">>, Ls))),
     {Msgs, _} = eval(Client3, Session, <<"ok.">>),
     ?assertEqual(<<"ok">>, value_of(Msgs)).
+
+completions_functions(Config) ->
+    {Session, Client} = clone(?config(client, Config)),
+    {[Resp], _} = dialtone_client:request(Client, #{<<"op">> => <<"completions">>,
+                                                    <<"session">> => Session,
+                                                    <<"prefix">> => <<"lists:mapf">>}),
+    Candidates = [C || #{<<"candidate">> := C} <- maps:get(<<"completions">>, Resp)],
+    ?assert(lists:member(<<"lists:mapfoldl">>, Candidates)),
+    ?assert(lists:member(<<"lists:mapfoldr">>, Candidates)),
+    [?assertEqual(<<"function">>, T)
+     || #{<<"type">> := T} <- maps:get(<<"completions">>, Resp)].
+
+completions_modules_and_vars(Config) ->
+    {Session, Client} = clone(?config(client, Config)),
+    {_, Client2} = eval(Client, Session, <<"Prefixed_thing = 1.">>),
+    {[Resp], _} = dialtone_client:request(Client2, #{<<"op">> => <<"completions">>,
+                                                     <<"session">> => Session,
+                                                     <<"prefix">> => <<"Prefixed_th">>}),
+    ?assertMatch([#{<<"candidate">> := <<"Prefixed_thing">>, <<"type">> := <<"var">>}],
+                 maps:get(<<"completions">>, Resp)),
+    {[Resp2], _} = dialtone_client:request(?config(client, Config),
+                                           #{<<"op">> => <<"completions">>,
+                                             <<"session">> => Session,
+                                             <<"prefix">> => <<"list">>}),
+    Mods = [C || #{<<"candidate">> := C, <<"type">> := <<"module">>}
+                     <- maps:get(<<"completions">>, Resp2)],
+    ?assert(lists:member(<<"lists">>, Mods)).
+
+lookup_function_docs(Config) ->
+    {Session, Client} = clone(?config(client, Config)),
+    {[Resp], _} = dialtone_client:request(Client, #{<<"op">> => <<"lookup">>,
+                                                    <<"session">> => Session,
+                                                    <<"sym">> => <<"lists:map/2">>}),
+    #{<<"info">> := Info} = Resp,
+    ?assertEqual(<<"map">>, maps:get(<<"name">>, Info)),
+    ?assertEqual(<<"lists">>, maps:get(<<"ns">>, Info)),
+    ?assertEqual(<<"map(Fun, List1)">>, maps:get(<<"arglists-str">>, Info)),
+    ?assert(is_integer(maps:get(<<"line">>, Info))),
+    ?assertMatch({_, _}, binary:match(maps:get(<<"doc">>, Info), <<"Takes a function">>)).
+
+%% Lookup on a module we just load-file'd: no doc chunk, so existence comes
+%% from exports and the line from the debug_info chunk.
+lookup_loaded_module_function(Config) ->
+    {Session, Client} = clone(?config(client, Config)),
+    Source = <<"-module(dialtone_ct_lookup).\n"
+               "-export([findme/1]).\n"
+               "findme(X) -> X.\n">>,
+    {_, Client2} = dialtone_client:request(
+                     Client, #{<<"op">> => <<"load-file">>,
+                               <<"session">> => Session,
+                               <<"file">> => Source,
+                               <<"file-path">> => <<"/tmp/dialtone_ct_lookup.erl">>}),
+    {[Resp], _} = dialtone_client:request(
+                    Client2, #{<<"op">> => <<"lookup">>,
+                               <<"session">> => Session,
+                               <<"sym">> => <<"dialtone_ct_lookup:findme">>}),
+    #{<<"info">> := Info} = Resp,
+    ?assertEqual(<<"/tmp/dialtone_ct_lookup.erl">>, maps:get(<<"file">>, Info)),
+    ?assertEqual(3, maps:get(<<"line">>, Info)).
+
+lookup_not_found(Config) ->
+    {Session, Client} = clone(?config(client, Config)),
+    {[Resp], _} = dialtone_client:request(Client, #{<<"op">> => <<"lookup">>,
+                                                    <<"session">> => Session,
+                                                    <<"sym">> => <<"no_such:thing">>}),
+    ?assertNot(maps:is_key(<<"info">>, Resp)),
+    ?assertEqual([<<"done">>], maps:get(<<"status">>, Resp)).
 
 session_survives_disconnect(Config) ->
     {Session, Client} = clone(?config(client, Config)),

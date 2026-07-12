@@ -8,7 +8,7 @@
     dialtone_conn_sup,
     dialtone_session_sup]},
   {mod, {dialtone_app, []}},
-  {applications, [kernel, stdlib, crypto]},
+  {applications, [kernel, stdlib, crypto, compiler]},
   %% listen is a list of server option maps (see dialtone:start_server/1).
   %% Empty by default: the application starts no listener, so it can be
   %% embedded (e.g. by repartee) without side effects.

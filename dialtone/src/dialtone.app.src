@@ -1,0 +1,17 @@
+{application, dialtone,
+ [{description, "A spec-faithful nREPL server for the BEAM"},
+  {vsn, "0.1.0"},
+  {registered,
+   [dialtone_sup,
+    dialtone_sessions,
+    dialtone_server_sup,
+    dialtone_conn_sup,
+    dialtone_session_sup]},
+  {mod, {dialtone_app, []}},
+  {applications, [kernel, stdlib, crypto]},
+  %% listen is a list of server option maps (see dialtone:start_server/1).
+  %% Empty by default: the application starts no listener, so it can be
+  %% embedded (e.g. by repartee) without side effects.
+  {env, [{listen, []}]},
+  {licenses, ["Apache-2.0"]},
+  {links, [{"GitHub", "https://github.com/nrepl/nrepl-beam"}]}]}.

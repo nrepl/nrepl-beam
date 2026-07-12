@@ -1,0 +1,10 @@
+#!/bin/sh
+# Development launcher for a standalone repartee nREPL server (plain Elixir,
+# no host project). Inside a Mix project prefer: mix repartee.server
+DIR="$(cd "$(dirname "$0")/.." && pwd)"
+BUILD="$DIR/_build/dev/lib"
+if [ ! -d "$BUILD/repartee/ebin" ]; then
+    (cd "$DIR" && mix deps.get >/dev/null && mix compile >/dev/null) || exit 1
+fi
+exec elixir -pa "$BUILD/repartee/ebin" -pa "$BUILD/dialtone/ebin" \
+    -e 'Repartee.CLI.run(System.argv())' -- "$@"

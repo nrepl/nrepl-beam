@@ -1,0 +1,10 @@
+#!/bin/sh
+# Development launcher for a standalone dialtone nREPL server.
+# Compiles the project on first use; to embed a server in your own
+# application use dialtone:start_server/1 instead.
+DIR="$(cd "$(dirname "$0")/.." && pwd)"
+EBIN="$DIR/_build/default/lib/dialtone/ebin"
+if [ ! -d "$EBIN" ]; then
+    (cd "$DIR" && rebar3 compile >/dev/null) || exit 1
+fi
+exec erl -noshell -pa "$EBIN" -eval 'dialtone_cli:main()' -extra "$@"

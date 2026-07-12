@@ -32,11 +32,12 @@ defmodule Repartee.Backend do
     line = Map.get(meta, :line, 1)
     column = Map.get(meta, :column, 1)
 
+    # No :emit_warnings here - parse warnings go through the worker's group
+    # leader, i.e. stream to the client as output, which is where they belong.
     quoted_opts = [
       file: to_string(file),
       line: line,
-      column: column,
-      emit_warnings: false
+      column: column
     ]
 
     case Code.string_to_quoted(code, quoted_opts) do

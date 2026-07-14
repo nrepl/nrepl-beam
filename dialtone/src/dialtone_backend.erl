@@ -19,8 +19,8 @@
 -type ok_result() :: #{value := unicode:chardata(), ns => unicode:chardata()}.
 -type err_result() :: #{err := unicode:chardata(), ex := unicode:chardata()}.
 -type candidate() :: #{candidate := binary(), type := binary()}.
-%% Wire-shaped info map for lookup: keys like <<"name">>, <<"doc">>,
-%% <<"arglists-str">>, <<"file">>, <<"line">>; values binary or integer.
+%% Wire-shaped info map for lookup: binary keys like "name", "doc",
+%% "arglists-str", "file", "line"; values binary or integer.
 -type info() :: #{binary() => binary() | integer()}.
 
 -export_type([state/0, eval_meta/0, ok_result/0, err_result/0,
@@ -46,8 +46,8 @@
 -callback format_exception(error | exit | throw, Reason :: term(),
                            erlang:stacktrace(), state()) -> err_result().
 
-%% Feeds the "versions" map in describe responses,
-%% e.g. #{<<"erlang">> => #{<<"version-string">> => <<"27.2">>}}.
+%% Feeds the "versions" map in describe responses, e.g. an "erlang" key
+%% mapping to a map with a "version-string" entry.
 -callback version_info() -> #{binary() => map()}.
 
 %% Options applied to the session's IO device at creation, e.g.

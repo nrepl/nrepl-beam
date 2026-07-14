@@ -3,7 +3,7 @@
 > A REPL's whole job is the instant witty reply.
 
 An [nREPL](https://nrepl.org) server for Elixir, built on
-[dialtone](../dialtone), the nREPL core for the BEAM. Use it to get a
+[dialtone](https://github.com/nrepl/nrepl-beam/tree/main/dialtone), the nREPL core for the BEAM. Use it to get a
 Clojure-grade interactive development experience against a live Elixir
 system from any nREPL client - such as [neat](https://github.com/nrepl/neat)
 in Emacs.

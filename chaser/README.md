@@ -3,8 +3,8 @@
 > A little something to go with your dialtone.
 
 A terminal nREPL client, taken neat. chaser speaks the plain nREPL
-protocol, so it works with [dialtone](../dialtone) (Erlang),
-[repartee](../repartee) (Elixir), and any other conformant server -
+protocol, so it works with [dialtone](https://github.com/nrepl/nrepl-beam/tree/main/dialtone) (Erlang),
+[repartee](https://github.com/nrepl/nrepl-beam/tree/main/repartee) (Elixir), and any other conformant server -
 Clojure's included. Following family tradition, the drink name sits on
 the client side of the bar, next to CIDER, Port and neat.
 

@@ -26,7 +26,9 @@ defmodule Repartee.MixProject do
   defp deps do
     [
       # TODO: switch to {:dialtone, "~> 0.1"} once dialtone is on hex
-      {:dialtone, path: "../dialtone", manager: :rebar3}
+      # (hex refuses to publish packages with path dependencies)
+      {:dialtone, path: "../dialtone", manager: :rebar3},
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false}
     ]
   end
 

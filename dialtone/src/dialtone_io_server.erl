@@ -36,11 +36,11 @@ set_sink(Io, Conn, Req) ->
     gen_server:call(Io, {set_sink, Conn, Req}, infinity).
 
 %% @doc Detach after the request finished (or its worker was killed).
-%% Parked reads get {error, terminated); type-ahead and EOF state persist.
+%% Parked reads get `{error, terminated}'; type-ahead and EOF state persist.
 reset(Io) ->
     gen_server:call(Io, reset, infinity).
 
-%% @doc Feed input from a stdin op. <<>> signals EOF.
+%% @doc Feed input from a stdin op. An empty payload signals EOF.
 stdin(Io, Data) ->
     gen_server:call(Io, {stdin, Data}, infinity).
 

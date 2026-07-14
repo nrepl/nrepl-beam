@@ -7,7 +7,7 @@ server core for the whole BEAM. dialtone implements the wire protocol
 (bencode over TCP), sessions, streamed IO, stdin, and interrupts once;
 what varies per language lives behind a small backend behaviour. The
 bundled `dialtone_backend_erlang` evaluates Erlang;
-[repartee](../repartee) plugs in Elixir the same way.
+[repartee](https://github.com/nrepl/nrepl-beam/tree/main/repartee) plugs in Elixir the same way.
 
 Named for Erlang's telephony roots: a dialtone is a REPL prompt,
 rendered in audio.

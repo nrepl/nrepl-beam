@@ -157,9 +157,15 @@ unsupported_backend_op(_Config) ->
 
 missing_code(Config) ->
     {Session, Client} = clone(?config(client, Config)),
-    {Msgs, _} = dialtone_client:request(Client, #{<<"op">> => <<"eval">>,
-                                                  <<"session">> => Session}),
-    ?assert(lists:member(<<"eval-error">>, statuses_of(Msgs))).
+    {Msgs, Client2} = dialtone_client:request(Client, #{<<"op">> => <<"eval">>,
+                                                        <<"session">> => Session}),
+    ?assertEqual([<<"done">>, <<"no-code">>], statuses_of(Msgs)),
+    ?assertEqual([], [M || #{<<"err">> := _} = M <- Msgs]),
+    %% code that's there but isn't a string is a malformed request
+    {Msgs2, _} = dialtone_client:request(Client2, #{<<"op">> => <<"eval">>,
+                                                    <<"session">> => Session,
+                                                    <<"code">> => 42}),
+    ?assert(lists:member(<<"eval-error">>, statuses_of(Msgs2))).
 
 stdout_streaming(Config) ->
     {Session, Client} = clone(?config(client, Config)),

@@ -123,6 +123,10 @@ handle_request(Op, Req, ReplyTo, State)
     case validate(Op, Req) of
         ok ->
             enqueue_or_run({Req, ReplyTo}, State);
+        no_code ->
+            %% Nothing was evaluated, so this isn't an eval-error.
+            dialtone_msg:reply_done(ReplyTo, Req, ['no-code'], #{}),
+            State;
         {error, Err} ->
             dialtone_msg:reply_done(ReplyTo, Req, ['eval-error'],
                                     #{<<"err">> => Err, <<"ex">> => <<"bad-request">>}),
@@ -151,7 +155,8 @@ handle_request(<<"lookup">>, Req, ReplyTo, State) ->
               end, Req, ReplyTo, State).
 
 validate(<<"eval">>, #{<<"code">> := Code}) when is_binary(Code) -> ok;
-validate(<<"eval">>, _) -> {error, <<"eval op requires a code field">>};
+validate(<<"eval">>, #{<<"code">> := _}) -> {error, <<"the code field must be a string">>};
+validate(<<"eval">>, _) -> no_code;
 validate(<<"load-file">>, #{<<"file">> := File}) when is_binary(File) -> ok;
 validate(<<"load-file">>, _) -> {error, <<"load-file op requires a file field">>}.
 

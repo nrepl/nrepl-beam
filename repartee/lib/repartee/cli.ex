@@ -27,6 +27,11 @@ defmodule Repartee.CLI do
       port_file: port_file
     ]
 
+    # A standalone server owns the node, so it can take over standard_error
+    # and send what evaluated code writes there to the client.
+    {:ok, _} = Application.ensure_all_started(:dialtone)
+    :ok = :dialtone.capture_stderr()
+
     case Repartee.start(start_opts) do
       {:ok, _server} ->
         Process.sleep(:infinity)

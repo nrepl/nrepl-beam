@@ -9,6 +9,10 @@
 %% resources they'd need to clean up. Output streaming needs no callback:
 %% evaluated code writes through its group leader, which dialtone owns.
 %%
+%% A backend that evaluates several forms in one eval reports the value of
+%% each form but the last with {@link emit_value/1} as it goes; the last one
+%% is the `value' that eval/3 returns.
+%%
 %% Optional callbacks gate op advertisement: a backend without `complete/3'
 %% simply yields a server that doesn't announce (or answer) `completions'.
 -module(dialtone_backend).
@@ -22,6 +26,8 @@
 %% Wire-shaped info map for lookup: binary keys like "name", "doc",
 %% "arglists-str", "file", "line"; values binary or integer.
 -type info() :: #{binary() => binary() | integer()}.
+
+-export([emit_value/1]).
 
 -export_type([state/0, eval_meta/0, ok_result/0, err_result/0,
               candidate/0, info/0]).
@@ -56,3 +62,11 @@
 
 -optional_callbacks([load_file/3, complete/3, lookup/3, format_exception/4,
                      io_opts/0]).
+
+%% @doc Send a value to the client right away, ahead of the one eval/3
+%% returns. Only meaningful inside eval/3, where the group leader is the
+%% session's IO server.
+-spec emit_value(unicode:chardata()) -> ok.
+emit_value(Value) ->
+    _ = io:request(group_leader(), {dialtone_value, Value}),
+    ok.

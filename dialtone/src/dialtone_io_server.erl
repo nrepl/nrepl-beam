@@ -84,6 +84,18 @@ io_request(From, ReplyAs, {put_chars, Chars}, State) ->
     io_request(From, ReplyAs, {put_chars, latin1, Chars}, State);
 io_request(From, ReplyAs, {put_chars, M, F, A}, State) ->
     io_request(From, ReplyAs, {put_chars, latin1, M, F, A}, State);
+%% A value from a form that isn't the last one in an eval, sent by the
+%% backend (see dialtone_backend:emit_value/1). It goes the same way as
+%% output, so it reaches the client in step with the code's output.
+io_request(From, ReplyAs, {dialtone_value, Value}, #io{sink = Sink} = State) ->
+    Reply = case unicode:characters_to_binary(Value) of
+                Bin when is_binary(Bin) ->
+                    emit_value(dialtone_msg:truncate_value(Bin), Sink);
+                _ ->
+                    {error, {no_translation, unicode, utf8}}
+            end,
+    io_reply(From, ReplyAs, Reply),
+    State;
 io_request(From, ReplyAs, {get_until, Encoding, Prompt, M, F, A}, State) ->
     enqueue_read(From, ReplyAs, {until, Encoding, M, F, A, []}, Prompt, State);
 io_request(From, ReplyAs, {get_line, Encoding, Prompt}, State) ->
@@ -136,6 +148,11 @@ do_put_chars(Encoding, Chars, #io{sink = Sink}) ->
         _ ->
             {error, {no_translation, Encoding, utf8}}
     end.
+
+emit_value(_Bin, undefined) ->
+    ok;
+emit_value(Bin, {Conn, Req}) ->
+    dialtone_msg:reply(Conn, Req, #{<<"value">> => Bin}).
 
 emit_out(_Bin, undefined) ->
     ok;

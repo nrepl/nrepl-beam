@@ -394,7 +394,14 @@ load_file_expressions(Config) ->
                    Client2, #{<<"op">> => <<"load-file">>,
                               <<"session">> => Session2,
                               <<"file">> => <<"X = 1. Y = 2. X + Y.">>}),
-    ?assertEqual(<<"3">>, value_of(Msgs2)).
+    ?assertEqual(<<"3">>, value_of(Msgs2)),
+    %% a file with nothing but comments in it isn't an error
+    {Session3, Client3} = clone(?config(client, Config)),
+    {Msgs3, _} = dialtone_client:request(
+                   Client3, #{<<"op">> => <<"load-file">>,
+                              <<"session">> => Session3,
+                              <<"file">> => <<"%% just a comment\n">>}),
+    ?assertNot(lists:member(<<"eval-error">>, statuses_of(Msgs3))).
 
 load_file_compile_error(Config) ->
     {Session, Client} = clone(?config(client, Config)),

@@ -44,6 +44,15 @@ defmodule Repartee.IntegrationTest do
     assert value_of(msgs) == "43"
   end
 
+  test "captures stderr when asked to", %{client: client} do
+    :ok = :dialtone.capture_stderr()
+    on_exit(fn -> Supervisor.terminate_child(:dialtone_sup, :dialtone_stderr) end)
+    {session, client} = clone(client)
+    {msgs, _} = eval(client, session, ~s|IO.write(:stderr, "oops")\n:ok|)
+    assert Enum.map_join(msgs, &Map.get(&1, "err", "")) == "oops"
+    assert value_of(msgs) == ":ok"
+  end
+
   test "streams stdout", %{client: client} do
     {session, client} = clone(client)
     {msgs, _} = eval(client, session, ~s|IO.puts("здравей")\n:ok|)

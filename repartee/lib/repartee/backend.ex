@@ -32,8 +32,9 @@ defmodule Repartee.Backend do
     line = Map.get(meta, :line, 1)
     column = Map.get(meta, :column, 1)
 
-    # No :emit_warnings here - parse warnings go through the worker's group
-    # leader, i.e. stream to the client as output, which is where they belong.
+    # No :emit_warnings here - parse warnings are written to :standard_error,
+    # which reaches the client as err when stderr capture is on (see
+    # :dialtone.capture_stderr/0) and the console otherwise.
     quoted_opts = [
       file: to_string(file),
       line: line,

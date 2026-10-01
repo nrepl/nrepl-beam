@@ -65,9 +65,11 @@ Repartee.port(server)
 
 ## Known limitations
 
-- `Logger` output and writes to `:standard_error` go to the server's
-  console, not the client (eval errors are reported to the client in
-  full).
+- `Logger` output goes to the server's console, not the client (eval
+  errors are reported to the client in full). Writes to
+  `:standard_error` reach the client with `mix repartee.server` and
+  `bin/repartee`. When you embed repartee, call
+  `:dialtone.capture_stderr()` if you want that too.
 - Values are rendered with `inspect/2` (IEx-style options,
   customizable via `:inspect_opts`).
 

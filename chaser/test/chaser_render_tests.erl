@@ -37,6 +37,13 @@ error_summary_and_indented_detail_test() ->
                    "   exception error: bad\n"
                    "     in div/2\n">>, Rendered).
 
+stderr_streams_as_written_test() ->
+    R0 = plain(),
+    {A, R1} = chaser_render:stderr(<<"a">>, R0),
+    {B, R2} = chaser_render:stderr(<<"b">>, R1),
+    {Val, _} = chaser_render:value(<<"ok">>, R2),
+    ?assertEqual(<<"ab\n=> ok\n">>, unicode:characters_to_binary([A, B, Val])).
+
 error_without_detail_test() ->
     ?assertEqual(<<"!! interrupted\n">>,
                  render(fun(R) -> chaser_render:err(<<"interrupted">>, <<>>, R) end)).

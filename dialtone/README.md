@@ -51,6 +51,13 @@ The `dialtone` application starts no listener on its own, so it's safe
 to include in a release. To start servers from configuration, set the
 `listen` app env to a list of option maps.
 
+`bin/dialtone` sends what evaluated code writes to `standard_error` to
+the client, as `err`. An embedded server doesn't do that by default,
+because `standard_error` is a single device for the whole node. Call
+`dialtone:capture_stderr()` (or set the `capture_stderr` app env to
+`true`) if you want it anyway. Writes from the rest of your application
+still go to the console.
+
 ## Supported operations
 
 `describe`, `clone`, `close`, `ls-sessions`, `eval`, `load-file`,
@@ -86,9 +93,8 @@ construction. See `dialtone_backend_erlang` and repartee's
 
 ## Known limitations
 
-- Writes to the global `standard_error` device and `logger` output go
-  to the server's console, not the client. Eval errors themselves are
-  reported to the client with full stack traces.
+- `logger` output goes to the server's console, not the client. Eval
+  errors themselves are reported to the client with full stack traces.
 - Values are rendered with `~tp` and truncated beyond 8 MB.
 
 ## Development

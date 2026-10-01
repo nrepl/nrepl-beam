@@ -27,5 +27,7 @@ init([]) ->
            type => supervisor},
          #{id => dialtone_server_sup,
            start => {dialtone_server_sup, start_link, []},
-           type => supervisor}],
+           type => supervisor}]
+        ++ [dialtone_stderr:child_spec()
+            || application:get_env(dialtone, capture_stderr, false) =:= true],
     {ok, {Flags, Children}}.

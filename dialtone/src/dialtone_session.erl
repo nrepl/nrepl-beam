@@ -71,7 +71,15 @@ handle_call(get_bstate, _From, State) ->
 
 handle_cast({request, #{<<"op">> := <<"close">>} = Req, ReplyTo}, State) ->
     interrupt_all(State),
-    dialtone_msg:reply_done(ReplyTo, Req, #{}),
+    %% Unregister before replying: once a client sees session-closed, its
+    %% next request must get unknown-session instead of reaching this
+    %% process while it shuts down.
+    ok = case State#session.ephemeral of
+             true -> ok;
+             false -> dialtone_sessions:remove(State#session.id)
+         end,
+    %% vim-fireplace only forgets a session once it sees session-closed.
+    dialtone_msg:reply_done(ReplyTo, Req, ['session-closed'], #{}),
     {stop, normal, State#session{running = undefined, queue = queue:new()}};
 handle_cast({request, Req, ReplyTo}, State) ->
     {noreply, handle_request(maps:get(<<"op">>, Req), Req, ReplyTo, State)}.

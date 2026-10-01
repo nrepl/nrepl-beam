@@ -25,6 +25,7 @@ all() ->
      stdin_roundtrip,
      stdin_eof,
      ls_sessions_and_close,
+     eval_after_close,
      ephemeral_eval,
      clone_inherits_bindings,
      concurrent_sessions,
@@ -203,7 +204,7 @@ ls_sessions_and_close(Config) ->
     {[CloseResp], Client3} =
         dialtone_client:request(Client2, #{<<"op">> => <<"close">>,
                                            <<"session">> => Session}),
-    ?assertEqual([<<"done">>], maps:get(<<"status">>, CloseResp)),
+    ?assertEqual([<<"session-closed">>, <<"done">>], maps:get(<<"status">>, CloseResp)),
     %% registry cleanup is async (DOWN); poll briefly
     ok = wait_until(fun() ->
                             {[Ls2], _} = dialtone_client:request(
@@ -215,7 +216,21 @@ ls_sessions_and_close(Config) ->
     {[CloseResp2], _} =
         dialtone_client:request(Client3, #{<<"op">> => <<"close">>,
                                            <<"session">> => Session}),
-    ?assertEqual([<<"done">>], maps:get(<<"status">>, CloseResp2)).
+    ?assertEqual([<<"session-closed">>, <<"done">>], maps:get(<<"status">>, CloseResp2)).
+
+%% Once a client has seen session-closed, the session has to be gone: a
+%% request sent right after it gets unknown-session instead of hanging.
+eval_after_close(Config) ->
+    lists:foreach(
+      fun(_) ->
+              {Session, Client} = clone(?config(client, Config)),
+              {[_], Client2} = dialtone_client:request(Client, #{<<"op">> => <<"close">>,
+                                                                 <<"session">> => Session}),
+              {Msgs, _} = dialtone_client:request(Client2, #{<<"op">> => <<"eval">>,
+                                                             <<"session">> => Session,
+                                                             <<"code">> => <<"ok.">>}),
+              ?assert(lists:member(<<"unknown-session">>, statuses_of(Msgs)))
+      end, lists:seq(1, 25)).
 
 ephemeral_eval(Config) ->
     {Msgs, _} = dialtone_client:request(?config(client, Config),
@@ -306,7 +321,7 @@ close_mid_eval(Config) ->
     {DoomedMsgs, Client4} = dialtone_client:recv_until_done(Client3, <<"doomed">>, 5000),
     ?assert(lists:member(<<"interrupted">>, statuses_of(DoomedMsgs))),
     {CloseMsgs, _} = dialtone_client:recv_until_done(Client4, <<"closer">>, 5000),
-    ?assertEqual([<<"done">>], statuses_of(CloseMsgs)).
+    ?assertEqual([<<"done">>, <<"session-closed">>], statuses_of(CloseMsgs)).
 
 load_file_module(Config) ->
     {Session, Client} = clone(?config(client, Config)),

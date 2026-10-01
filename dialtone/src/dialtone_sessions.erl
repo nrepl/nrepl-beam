@@ -5,7 +5,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, new/2, lookup/1, list/0]).
+-export([start_link/0, new/2, lookup/1, list/0, remove/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
 -define(TAB, ?MODULE).
@@ -30,10 +30,21 @@ lookup(Id) ->
 list() ->
     [Id || {Id, _Pid} <- ets:tab2list(?TAB)].
 
+%% @doc Forget a session right away instead of when its process goes down,
+%% so a client that's been told the session is closed can't reach it any
+%% more. Called by the session itself while handling close.
+remove(Id) ->
+    gen_server:call(?MODULE, {remove, Id}).
+
 init([]) ->
     ?TAB = ets:new(?TAB, [named_table, protected, {read_concurrency, true}]),
     {ok, #{}}.
 
+handle_call({remove, Id}, _From, Monitors) ->
+    %% The monitor stays: the DOWN that follows deletes the row again, which
+    %% is harmless.
+    true = ets:delete(?TAB, Id),
+    {reply, ok, Monitors};
 handle_call({new, Backend, InitialBState}, _From, Monitors) ->
     Id = dialtone_uuid:v4(),
     case dialtone_session_sup:start_session(Id, Backend, InitialBState) of

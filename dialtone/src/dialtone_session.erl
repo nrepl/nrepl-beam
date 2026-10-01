@@ -166,7 +166,7 @@ ro_meta(Req) ->
 read_only(F, Args, Render, Req, ReplyTo, #session{backend = {BMod, _}} = State) ->
     case erlang:function_exported(BMod, F, length(Args) + 1) of
         false ->
-            dialtone_msg:reply_done(ReplyTo, Req, ['unknown-op'], #{});
+            dialtone_msg:send(ReplyTo, dialtone_msg:unknown_op(Req));
         true ->
             try apply(BMod, F, Args ++ [State#session.bstate]) of
                 Result ->

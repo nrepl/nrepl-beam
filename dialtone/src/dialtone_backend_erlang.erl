@@ -51,6 +51,9 @@ load_file(Contents, Meta, State) ->
     Path = maps:get(path, Meta, maps:get(name, Meta, <<"nrepl-load-file">>)),
     Str = unicode:characters_to_list(Contents),
     case erl_scan:string(Str) of
+        {ok, [], _EndLoc} ->
+            %% Nothing but whitespace and comments: same as an empty eval.
+            eval(Contents, #{file => Path}, State, false);
         {ok, Tokens, EndLoc} ->
             Forms = split_dots(ensure_dot(Tokens, EndLoc)),
             case is_module_source(Forms) of

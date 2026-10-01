@@ -3,7 +3,9 @@
 %%
 %% Code is scanned/parsed/evaluated with the stdlib erl_scan/erl_parse/
 %% erl_eval pipeline. Dot-terminated forms evaluate in sequence, threading
-%% bindings; the last value is reported. A missing final dot is forgiven
+%% bindings, and each form's value is reported as it's computed, like the
+%% shell prints them (load-file reports only the last one). A missing final
+%% dot is forgiven
 %% (editors send bare expressions like "1 + 2"). Evaluating module
 %% definitions is not supported by erl_eval - load-file (M3) compiles module
 %% sources via compile:forms instead.
@@ -18,7 +20,11 @@ init(_Opts) ->
     %% so lookup can read their debug_info chunk (they exist only in memory).
     {ok, #{bindings => erl_eval:new_bindings(), beams => #{}}}.
 
-eval(Code, Meta, #{bindings := Bindings} = State) ->
+eval(Code, Meta, State) ->
+    eval(Code, Meta, State, true).
+
+%% EmitAll says whether forms before the last report their values too.
+eval(Code, Meta, #{bindings := Bindings} = State, EmitAll) ->
     StartLoc = {maps:get(line, Meta, 1), maps:get(column, Meta, 1)},
     Str = unicode:characters_to_list(Code),
     case erl_scan:string(Str, StartLoc) of
@@ -29,7 +35,7 @@ eval(Code, Meta, #{bindings := Bindings} = State) ->
         {ok, Tokens, EndLoc} ->
             case parse_forms(ensure_dot(Tokens, EndLoc)) of
                 {ok, ExprLists} ->
-                    eval_forms(ExprLists, Bindings, State);
+                    eval_forms(ExprLists, Bindings, State, EmitAll);
                 {error, ErrResult} ->
                     {error, ErrResult, State}
             end;
@@ -49,7 +55,8 @@ load_file(Contents, Meta, State) ->
             Forms = split_dots(ensure_dot(Tokens, EndLoc)),
             case is_module_source(Forms) of
                 true -> compile_module(Forms, Path, State);
-                false -> eval(Contents, #{file => Path}, State)
+                %% Like nREPL, load-file reports just the last form's value.
+                false -> eval(Contents, #{file => Path}, State, false)
             end;
         {error, {Loc, Mod, Desc}, _} ->
             {error, syntax_error(Loc, Mod, Desc), State}
@@ -374,14 +381,19 @@ split_dots([Token | Rest], Current, Forms) ->
 
 %% Runtime errors raise out of erl_eval and are rendered by the worker's
 %% catch-all (dialtone_err) - by design, so users see real stacktraces.
-eval_forms(ExprLists, Bindings0, State) ->
-    {Value, Bindings} =
-        lists:foldl(fun(Exprs, {_PrevValue, B}) ->
-                            {value, V, B2} = erl_eval:exprs(Exprs, B),
-                            {V, B2}
-                    end, {ok, Bindings0}, ExprLists),
-    {ok, #{value => io_lib:format("~tp", [Value])},
-     State#{bindings := Bindings}}.
+eval_forms([Exprs], Bindings0, State, _EmitAll) ->
+    {value, Value, Bindings} = erl_eval:exprs(Exprs, Bindings0),
+    {ok, #{value => format_value(Value)}, State#{bindings := Bindings}};
+eval_forms([Exprs | Rest], Bindings0, State, EmitAll) ->
+    {value, Value, Bindings} = erl_eval:exprs(Exprs, Bindings0),
+    case EmitAll of
+        true -> dialtone_backend:emit_value(format_value(Value));
+        false -> ok
+    end,
+    eval_forms(Rest, Bindings, State, EmitAll).
+
+format_value(Value) ->
+    io_lib:format("~tp", [Value]).
 
 syntax_error(Loc, Mod, Desc) ->
     Where = case Loc of

@@ -17,10 +17,6 @@
 -export([start_link/3, start_ephemeral/2, request/3, get_bstate/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
-%% Crude safety net against a multi-gigabyte value taking the editor down;
-%% a proper client-negotiated print quota can replace it later.
--define(MAX_VALUE_BYTES, 8 * 1024 * 1024).
-
 -record(session, {id :: binary(),
                   backend :: {module(), map()},
                   bstate :: term(),
@@ -231,7 +227,7 @@ eval_meta(Req) ->
 deliver_result(Req, ReplyTo, Result, #session{bstate = OldBState}) ->
     case Result of
         {ok, OkMap, NewBState} ->
-            Value = truncate(unicode:characters_to_binary(maps:get(value, OkMap))),
+            Value = dialtone_msg:truncate_value(unicode:characters_to_binary(maps:get(value, OkMap))),
             Extra = case OkMap of
                         #{ns := Ns} -> #{<<"ns">> => unicode:characters_to_binary(Ns)};
                         _ -> #{}
@@ -250,12 +246,6 @@ deliver_result(Req, ReplyTo, Result, #session{bstate = OldBState}) ->
                                     dialtone_err:to_wire(ErrMap)),
             OldBState
     end.
-
-truncate(Bin) when byte_size(Bin) > ?MAX_VALUE_BYTES ->
-    Head = binary:part(Bin, 0, ?MAX_VALUE_BYTES),
-    <<Head/binary, "... (value truncated by dialtone)">>;
-truncate(Bin) ->
-    Bin.
 
 next(#session{ephemeral = true, running = undefined} = State) ->
     %% One request served; this throwaway session is done.

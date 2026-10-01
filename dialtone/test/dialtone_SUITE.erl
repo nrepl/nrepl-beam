@@ -113,8 +113,21 @@ bindings_persist(Config) ->
 
 multi_form_eval(Config) ->
     {Session, Client} = clone(?config(client, Config)),
-    {Msgs, _} = eval(Client, Session, <<"A = 1. B = A + 1. A + B.">>),
-    ?assertEqual(<<"3">>, value_of(Msgs)).
+    {Msgs, Client2} = eval(Client, Session, <<"A = 1. B = A + 1. A + B.">>),
+    %% one value per form, like the shell prints them
+    ?assertEqual([<<"1">>, <<"2">>, <<"3">>], [V || #{<<"value">> := V} <- Msgs]),
+    %% each value goes out as soon as its form is done, so it arrives in
+    %% step with the output
+    {Msgs2, Client3} = eval(Client2, Session, <<"io:format(\"a\"). io:format(\"b\").">>),
+    ?assertEqual([{out, <<"a">>}, {value, <<"ok">>}, {out, <<"b">>}, {value, <<"ok">>}],
+                 [case M of
+                      #{<<"out">> := O} -> {out, O};
+                      #{<<"value">> := V} -> {value, V}
+                  end || M <- Msgs2, is_map_key(<<"out">>, M) orelse is_map_key(<<"value">>, M)]),
+    %% an error in a later form doesn't swallow the earlier values
+    {Msgs3, _} = eval(Client3, Session, <<"1. 1 div 0.">>),
+    ?assertEqual([<<"1">>], [V || #{<<"value">> := V} <- Msgs3]),
+    ?assert(lists:member(<<"eval-error">>, statuses_of(Msgs3))).
 
 syntax_error(Config) ->
     {Session, Client} = clone(?config(client, Config)),
@@ -374,7 +387,14 @@ load_file_expressions(Config) ->
                   Client, #{<<"op">> => <<"load-file">>,
                             <<"session">> => Session,
                             <<"file">> => <<"A = 20, B = 22, A + B.">>}),
-    ?assertEqual(<<"42">>, value_of(Msgs)).
+    ?assertEqual(<<"42">>, value_of(Msgs)),
+    %% several forms still report only the last value, like nREPL
+    {Session2, Client2} = clone(?config(client, Config)),
+    {Msgs2, _} = dialtone_client:request(
+                   Client2, #{<<"op">> => <<"load-file">>,
+                              <<"session">> => Session2,
+                              <<"file">> => <<"X = 1. Y = 2. X + Y.">>}),
+    ?assertEqual(<<"3">>, value_of(Msgs2)).
 
 load_file_compile_error(Config) ->
     {Session, Client} = clone(?config(client, Config)),

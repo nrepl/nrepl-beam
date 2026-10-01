@@ -23,6 +23,9 @@ all() ->
      missing_code,
      stdout_streaming,
      stdout_before_done,
+     stderr_capture,
+     stderr_capture_env,
+     stderr_dead_io_server,
      stdin_roundtrip,
      stdin_eof,
      ls_sessions_and_close,
@@ -85,6 +88,9 @@ statuses_of(Msgs) ->
 
 out_of(Msgs) ->
     iolist_to_binary([O || #{<<"out">> := O} <- Msgs]).
+
+err_of(Msgs) ->
+    iolist_to_binary([E || #{<<"err">> := E} <- Msgs]).
 
 %%% Cases
 
@@ -563,3 +569,122 @@ ephemeral_sessions_stop(Config) ->
        #{<<"op">> => <<"completions">>, <<"prefix">> => <<"li">>},
        #{<<"op">> => <<"lookup">>, <<"sym">> => <<"lists">>}]),
     ok = wait_until(fun() -> Sessions() =< Before end).
+
+stderr_capture(Config) ->
+    with_fake_device(fun(Fake) -> stderr_capture(Config, Fake) end).
+
+stderr_capture(Config, Fake) ->
+    {Session, Client} = clone(?config(client, Config)),
+    Write = <<"io:format(standard_error, \"proof\", []), ok.">>,
+    %% off by default: the write goes to the device
+    {Before, Client2} = eval(Client, Session, Write),
+    ?assertEqual(<<>>, err_of(Before)),
+    ?assertEqual(<<"proof">>, fake_device_output(Fake)),
+    ok = dialtone:capture_stderr(),
+    ok = dialtone:capture_stderr(),
+    {Captured, Client3} = eval(Client2, Session, Write),
+    ?assertEqual(<<"proof">>, err_of(Captured)),
+    ?assertEqual(<<"ok">>, value_of(Captured)),
+    %% processes spawned by the eval inherit its group leader...
+    {Spawned, Client4} =
+        eval(Client3, Session,
+             <<"Self = self(), "
+               "spawn(fun() -> io:format(standard_error, \"kid\", []), Self ! done end), "
+               "receive done -> ok end.">>),
+    ?assertEqual(<<"kid">>, err_of(Spawned)),
+    %% ...but what they write after the eval is done has no client to
+    %% go to, so it goes to the device
+    {_, Client5} =
+        eval(Client4, Session,
+             <<"spawn(fun() -> timer:sleep(100), "
+               "io:format(standard_error, \"late\", []) end), ok.">>),
+    ok = wait_until(fun() -> fake_device_output(Fake) =:= <<"late">> end),
+    %% writes from anything else go to the device too
+    ok = io:format(standard_error, "test", []),
+    ?assertEqual(<<"test">>, fake_device_output(Fake)),
+    ok = supervisor:terminate_child(dialtone_sup, dialtone_stderr),
+    ?assertEqual(Fake, whereis(standard_error)),
+    {After, _} = eval(Client5, Session, Write),
+    ?assertEqual(<<>>, err_of(After)).
+
+%% A writer whose IO server goes away before answering gets an error
+%% instead of waiting forever.
+stderr_dead_io_server(_Config) ->
+    with_fake_device(
+      fun(_Fake) ->
+              ok = dialtone:capture_stderr(),
+              %% looks like a session IO server, but dies on the first write
+              Io = spawn(fun() ->
+                                 put('$dialtone_io_server', true),
+                                 receive {stderr_request, _, _, _} -> exit(gone) end
+                         end),
+              Self = self(),
+              _ = spawn(fun() ->
+                                group_leader(Io, self()),
+                                Result = try io:format(standard_error, "x", [])
+                                         catch error:Reason -> {error, Reason}
+                                         end,
+                                Self ! {written, Result}
+                        end),
+              receive
+                  {written, Result} -> ?assertMatch({error, _}, Result)
+              after 2000 ->
+                      ct:fail(writer_hung)
+              end
+      end).
+
+%% Stand in for the node's real standard_error while Fun runs, so tests can
+%% see what reaches it, and put everything back afterwards.
+with_fake_device(Fun) ->
+    Real = whereis(standard_error),
+    Fake = spawn_link(fun fake_device/0),
+    true = unregister(standard_error),
+    true = register(standard_error, Fake),
+    _ = persistent_term:erase({dialtone_stderr, original}),
+    try
+        Fun(Fake)
+    after
+        _ = supervisor:terminate_child(dialtone_sup, dialtone_stderr),
+        _ = supervisor:delete_child(dialtone_sup, dialtone_stderr),
+        _ = persistent_term:erase({dialtone_stderr, original}),
+        try unregister(standard_error) catch error:badarg -> ok end,
+        true = register(standard_error, Real),
+        unlink(Fake),
+        exit(Fake, kill)
+    end.
+
+%% A minimal IO device that remembers what's written to it.
+fake_device() ->
+    fake_device(<<>>).
+
+fake_device(Acc) ->
+    receive
+        {io_request, From, ReplyAs, {put_chars, Enc, M, F, A}} ->
+            From ! {io_reply, ReplyAs, ok},
+            fake_device(<<Acc/binary, (unicode:characters_to_binary(apply(M, F, A), Enc))/binary>>);
+        {io_request, From, ReplyAs, {put_chars, Enc, Chars}} ->
+            From ! {io_reply, ReplyAs, ok},
+            fake_device(<<Acc/binary, (unicode:characters_to_binary(Chars, Enc))/binary>>);
+        {io_request, From, ReplyAs, _} ->
+            From ! {io_reply, ReplyAs, {error, request}},
+            fake_device(Acc);
+        {take, From} ->
+            From ! {output, Acc},
+            fake_device(<<>>)
+    end.
+
+%% What the device got since the last call.
+fake_device_output(Fake) ->
+    Fake ! {take, self()},
+    receive {output, Out} -> Out after 1000 -> timeout end.
+
+%% A capture_stderr app env that isn't true mustn't stop dialtone from
+%% starting.
+stderr_capture_env(_Config) ->
+    ok = application:set_env(dialtone, capture_stderr, "true"),
+    try
+        {ok, {_, Children}} = dialtone_sup:init([]),
+        ?assertNot(lists:keymember(dialtone_stderr, 2, [{x, maps:get(id, C)} || C <- Children]))
+    after
+        application:unset_env(dialtone, capture_stderr)
+    end.

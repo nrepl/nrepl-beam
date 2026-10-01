@@ -8,6 +8,9 @@
 %% before the eval's value/done, structurally). Output arriving while no
 %% request is running (stragglers spawned by past evals) is dropped.
 %%
+%% Writes to standard_error from evaluated code arrive via dialtone_stderr
+%% (when stderr capture is on) and go out the same way, as "err".
+%%
 %% Input (get_until/get_line/get_chars) is served from a type-ahead buffer;
 %% when it runs dry the request is parked, the client is told "need-input",
 %% and a later stdin op resumes the parked read. An empty stdin payload
@@ -16,8 +19,10 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, set_sink/3, reset/1, stdin/2]).
+-export([start_link/0, set_sink/3, reset/1, stdin/2, is_io_server/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
+
+-define(MARKER, '$dialtone_io_server').
 
 -record(io, {sink :: undefined | {pid(), map()},
              %% reads parked waiting for input: {From, ReplyAs, Spec}
@@ -40,11 +45,24 @@ set_sink(Io, Conn, Req) ->
 reset(Io) ->
     gen_server:call(Io, reset, infinity).
 
+%% @doc Whether Pid is a session IO server on this node.
+-spec is_io_server(pid()) -> boolean().
+is_io_server(Pid) when node(Pid) =:= node() ->
+    case erlang:process_info(Pid, dictionary) of
+        {dictionary, Dict} -> proplists:get_value(?MARKER, Dict) =:= true;
+        undefined -> false
+    end;
+is_io_server(_Pid) ->
+    false.
+
 %% @doc Feed input from a stdin op. An empty payload signals EOF.
 stdin(Io, Data) ->
     gen_server:call(Io, {stdin, Data}, infinity).
 
 init([]) ->
+    %% Lets dialtone_stderr tell session IO servers from other group
+    %% leaders without asking the process anything.
+    put(?MARKER, true),
     {ok, #io{}}.
 
 handle_call({set_sink, Conn, Req}, _From, State) ->
@@ -64,19 +82,29 @@ handle_cast(_Msg, State) ->
 
 handle_info({io_request, From, ReplyAs, Request}, State) ->
     {noreply, io_request(From, ReplyAs, Request, State)};
+%% A write to standard_error relayed by dialtone_stderr. The reply goes back
+%% to the relay, which passes it on to the writer. With no request running
+%% there's no client to send it to, so it's handed back to go to the
+%% console as usual.
+handle_info({stderr_request, Relay, Tag, _Request}, #io{sink = undefined} = State) ->
+    Relay ! {stderr_unclaimed, Tag},
+    {noreply, State};
+handle_info({stderr_request, Relay, Tag, Request}, #io{sink = Sink} = State) ->
+    Relay ! {io_reply, Tag, stderr_write(Request, Sink)},
+    {noreply, State};
 handle_info(_Info, State) ->
     {noreply, State}.
 
 %%% Requests
 
 io_request(From, ReplyAs, {put_chars, Encoding, Chars}, State) ->
-    io_reply(From, ReplyAs, do_put_chars(Encoding, Chars, State)),
+    io_reply(From, ReplyAs, do_put_chars(Encoding, Chars, <<"out">>, State#io.sink)),
     State;
 io_request(From, ReplyAs, {put_chars, Encoding, M, F, A}, State) ->
     Chars = try apply(M, F, A) catch _:_ -> {error, format} end,
     case Chars of
         {error, _} = Error -> io_reply(From, ReplyAs, Error);
-        _ -> io_reply(From, ReplyAs, do_put_chars(Encoding, Chars, State))
+        _ -> io_reply(From, ReplyAs, do_put_chars(Encoding, Chars, <<"out">>, State#io.sink))
     end,
     State;
 %% Pre-R15 forms without encoding still occur in the wild.
@@ -123,13 +151,7 @@ io_request(From, ReplyAs, {requests, Requests}, State) ->
     %% The composite's reply is the last request's reply; put_chars replies
     %% are computed inline, so only output requests are legal here (which is
     %% how the io module uses it).
-    Reply = lists:foldl(
-              fun({put_chars, E, C}, _) -> do_put_chars(E, C, State);
-                 ({put_chars, E, M, F, A}, _) ->
-                      do_put_chars(E, try apply(M, F, A) catch _:_ -> <<>> end, State);
-                 (_, Acc) -> Acc
-              end, ok, Requests),
-    io_reply(From, ReplyAs, Reply),
+    io_reply(From, ReplyAs, put_requests(Requests, <<"out">>, State#io.sink)),
     State;
 io_request(From, ReplyAs, _Unknown, State) ->
     io_reply(From, ReplyAs, {error, request}),
@@ -141,23 +163,48 @@ io_reply(From, ReplyAs, Reply) ->
 
 %%% Output
 
-do_put_chars(Encoding, Chars, #io{sink = Sink}) ->
+put_requests(Requests, Stream, Sink) ->
+    lists:foldl(
+      fun({put_chars, E, C}, _) -> do_put_chars(E, C, Stream, Sink);
+         ({put_chars, E, M, F, A}, _) ->
+              do_put_chars(E, try apply(M, F, A) catch _:_ -> <<>> end, Stream, Sink);
+         (_, Acc) -> Acc
+      end, ok, Requests).
+
+%% The output requests dialtone_stderr relays; anything else stays with the
+%% real device.
+stderr_write({put_chars, Encoding, Chars}, Sink) ->
+    do_put_chars(Encoding, Chars, <<"err">>, Sink);
+stderr_write({put_chars, Encoding, M, F, A}, Sink) ->
+    case try apply(M, F, A) catch _:_ -> {error, format} end of
+        {error, _} = Error -> Error;
+        Chars -> do_put_chars(Encoding, Chars, <<"err">>, Sink)
+    end;
+stderr_write({put_chars, Chars}, Sink) ->
+    stderr_write({put_chars, latin1, Chars}, Sink);
+stderr_write({put_chars, M, F, A}, Sink) ->
+    stderr_write({put_chars, latin1, M, F, A}, Sink);
+stderr_write({requests, Requests}, Sink) ->
+    put_requests(Requests, <<"err">>, Sink).
+
+do_put_chars(Encoding, Chars, Stream, Sink) ->
     case unicode:characters_to_binary(Chars, Encoding, utf8) of
         Bin when is_binary(Bin) ->
-            emit_out(Bin, Sink);
+            emit(Stream, Bin, Sink);
         _ ->
             {error, {no_translation, Encoding, utf8}}
     end.
 
-emit_value(_Bin, undefined) ->
-    ok;
-emit_value(Bin, {Conn, Req}) ->
-    dialtone_msg:reply(Conn, Req, #{<<"value">> => Bin}).
+emit_value(Bin, Sink) ->
+    emit(<<"value">>, Bin, Sink).
 
-emit_out(_Bin, undefined) ->
+emit_out(Bin, Sink) ->
+    emit(<<"out">>, Bin, Sink).
+
+emit(_Stream, _Bin, undefined) ->
     ok;
-emit_out(Bin, {Conn, Req}) ->
-    dialtone_msg:reply(Conn, Req, #{<<"out">> => Bin}).
+emit(Stream, Bin, {Conn, Req}) ->
+    dialtone_msg:reply(Conn, Req, #{Stream => Bin}).
 
 %%% Input
 

@@ -7,7 +7,7 @@
 %% green "=> " prefix; errors a red "!! " summary with the trace indented.
 -module(chaser_render).
 
--export([new/1, out/2, value/2, err/3, note/2, banner/2, doc/2, prompt/2]).
+-export([new/1, out/2, stderr/2, value/2, err/3, note/2, banner/2, doc/2, prompt/2]).
 
 -record(r, {color :: boolean(),
             bol = true :: boolean()}).  %% at beginning of line?
@@ -25,6 +25,11 @@ new(#{color := Color}) ->
 %% @doc Streamed output, printed exactly as the program wrote it.
 out(Chunk, R) ->
     {Chunk, track(Chunk, R)}.
+
+%% @doc Streamed error output (stderr), printed as the program wrote it,
+%% in red when colors are on.
+stderr(Chunk, R) ->
+    {style(?RED, Chunk, R), track(Chunk, R)}.
 
 %% @doc An eval result: `=> Value', with continuation lines indented to
 %% align under the value.

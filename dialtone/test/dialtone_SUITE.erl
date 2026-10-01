@@ -19,6 +19,7 @@ all() ->
      syntax_error,
      runtime_error,
      unknown_op,
+     unsupported_backend_op,
      missing_code,
      stdout_streaming,
      stdout_before_done,
@@ -135,7 +136,24 @@ runtime_error(Config) ->
 unknown_op(Config) ->
     {[Resp], _} = dialtone_client:request(?config(client, Config),
                                           #{<<"op">> => <<"frobnicate">>}),
-    ?assertEqual([<<"unknown-op">>, <<"done">>], maps:get(<<"status">>, Resp)).
+    ?assertEqual([<<"unknown-op">>, <<"done">>], maps:get(<<"status">>, Resp)),
+    ?assertEqual(<<"frobnicate">>, maps:get(<<"op">>, Resp)).
+
+%% Ops a backend doesn't implement are answered by the session, and they
+%% echo the op too.
+unsupported_backend_op(_Config) ->
+    {ok, Server} = dialtone:start_server(#{port => 0, port_file => false,
+                                           backend => {dialtone_minimal_backend, #{}}}),
+    try
+        {Session, Client} = clone(dialtone_client:connect(dialtone:port(Server))),
+        {[Resp], _} = dialtone_client:request(Client, #{<<"op">> => <<"completions">>,
+                                                        <<"session">> => Session,
+                                                        <<"prefix">> => <<"li">>}),
+        ?assertEqual([<<"unknown-op">>, <<"done">>], maps:get(<<"status">>, Resp)),
+        ?assertEqual(<<"completions">>, maps:get(<<"op">>, Resp))
+    after
+        ok = dialtone:stop_server(Server)
+    end.
 
 missing_code(Config) ->
     {Session, Client} = clone(?config(client, Config)),

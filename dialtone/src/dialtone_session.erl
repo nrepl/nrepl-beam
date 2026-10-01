@@ -82,7 +82,14 @@ handle_cast({request, #{<<"op">> := <<"close">>} = Req, ReplyTo}, State) ->
     dialtone_msg:reply_done(ReplyTo, Req, ['session-closed'], #{}),
     {stop, normal, State#session{running = undefined, queue = queue:new()}};
 handle_cast({request, Req, ReplyTo}, State) ->
-    {noreply, handle_request(maps:get(<<"op">>, Req), Req, ReplyTo, State)}.
+    case handle_request(maps:get(<<"op">>, Req), Req, ReplyTo, State) of
+        %% A throwaway session whose request was answered without starting
+        %% an eval (no-code, completions, ...) has nothing left to do.
+        #session{ephemeral = true, running = undefined} = State1 ->
+            {stop, normal, State1};
+        State1 ->
+            {noreply, State1}
+    end.
 
 handle_info({eval_result, Ref, Result},
             #session{running = #{ref := Ref, req := Req, reply_to := ReplyTo,

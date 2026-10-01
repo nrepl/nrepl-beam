@@ -28,6 +28,7 @@ all() ->
      ls_sessions_and_close,
      eval_after_close,
      ephemeral_eval,
+     ephemeral_sessions_stop,
      clone_inherits_bindings,
      concurrent_sessions,
      interrupt_running_eval,
@@ -517,3 +518,21 @@ wait_until(Fun, N) ->
         true -> ok;
         false -> timer:sleep(20), wait_until(Fun, N - 1)
     end.
+
+%% Sessionless requests that don't start an eval mustn't leave their
+%% throwaway session behind.
+ephemeral_sessions_stop(Config) ->
+    Sessions = fun() ->
+                       length([P || P <- processes(),
+                                    proc_lib:translate_initial_call(P) =:=
+                                        {dialtone_session, init, 1}])
+               end,
+    Before = Sessions(),
+    lists:foreach(
+      fun(Req) ->
+              {_, _} = dialtone_client:request(?config(client, Config), Req)
+      end,
+      [#{<<"op">> => <<"eval">>},
+       #{<<"op">> => <<"completions">>, <<"prefix">> => <<"li">>},
+       #{<<"op">> => <<"lookup">>, <<"sym">> => <<"lists">>}]),
+    ok = wait_until(fun() -> Sessions() =< Before end).

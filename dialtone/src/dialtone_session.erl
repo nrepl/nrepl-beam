@@ -17,10 +17,6 @@
 -export([start_link/3, start_ephemeral/2, request/3, get_bstate/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
-%% Crude safety net against a multi-gigabyte value taking the editor down;
-%% a proper client-negotiated print quota can replace it later.
--define(MAX_VALUE_BYTES, 8 * 1024 * 1024).
-
 -record(session, {id :: binary(),
                   backend :: {module(), map()},
                   bstate :: term(),
@@ -71,10 +67,25 @@ handle_call(get_bstate, _From, State) ->
 
 handle_cast({request, #{<<"op">> := <<"close">>} = Req, ReplyTo}, State) ->
     interrupt_all(State),
-    dialtone_msg:reply_done(ReplyTo, Req, #{}),
+    %% Unregister before replying: once a client sees session-closed, its
+    %% next request must get unknown-session instead of reaching this
+    %% process while it shuts down.
+    ok = case State#session.ephemeral of
+             true -> ok;
+             false -> dialtone_sessions:remove(State#session.id)
+         end,
+    %% vim-fireplace only forgets a session once it sees session-closed.
+    dialtone_msg:reply_done(ReplyTo, Req, ['session-closed'], #{}),
     {stop, normal, State#session{running = undefined, queue = queue:new()}};
 handle_cast({request, Req, ReplyTo}, State) ->
-    {noreply, handle_request(maps:get(<<"op">>, Req), Req, ReplyTo, State)}.
+    case handle_request(maps:get(<<"op">>, Req), Req, ReplyTo, State) of
+        %% A throwaway session whose request was answered without starting
+        %% an eval (no-code, completions, ...) has nothing left to do.
+        #session{ephemeral = true, running = undefined} = State1 ->
+            {stop, normal, State1};
+        State1 ->
+            {noreply, State1}
+    end.
 
 handle_info({eval_result, Ref, Result},
             #session{running = #{ref := Ref, req := Req, reply_to := ReplyTo,
@@ -115,6 +126,10 @@ handle_request(Op, Req, ReplyTo, State)
     case validate(Op, Req) of
         ok ->
             enqueue_or_run({Req, ReplyTo}, State);
+        no_code ->
+            %% Nothing was evaluated, so this isn't an eval-error.
+            dialtone_msg:reply_done(ReplyTo, Req, ['no-code'], #{}),
+            State;
         {error, Err} ->
             dialtone_msg:reply_done(ReplyTo, Req, ['eval-error'],
                                     #{<<"err">> => Err, <<"ex">> => <<"bad-request">>}),
@@ -143,7 +158,8 @@ handle_request(<<"lookup">>, Req, ReplyTo, State) ->
               end, Req, ReplyTo, State).
 
 validate(<<"eval">>, #{<<"code">> := Code}) when is_binary(Code) -> ok;
-validate(<<"eval">>, _) -> {error, <<"eval op requires a code field">>};
+validate(<<"eval">>, #{<<"code">> := _}) -> {error, <<"the code field must be a string">>};
+validate(<<"eval">>, _) -> no_code;
 validate(<<"load-file">>, #{<<"file">> := File}) when is_binary(File) -> ok;
 validate(<<"load-file">>, _) -> {error, <<"load-file op requires a file field">>}.
 
@@ -158,7 +174,7 @@ ro_meta(Req) ->
 read_only(F, Args, Render, Req, ReplyTo, #session{backend = {BMod, _}} = State) ->
     case erlang:function_exported(BMod, F, length(Args) + 1) of
         false ->
-            dialtone_msg:reply_done(ReplyTo, Req, ['unknown-op'], #{});
+            dialtone_msg:send(ReplyTo, dialtone_msg:unknown_op(Req));
         true ->
             try apply(BMod, F, Args ++ [State#session.bstate]) of
                 Result ->
@@ -211,7 +227,7 @@ eval_meta(Req) ->
 deliver_result(Req, ReplyTo, Result, #session{bstate = OldBState}) ->
     case Result of
         {ok, OkMap, NewBState} ->
-            Value = truncate(unicode:characters_to_binary(maps:get(value, OkMap))),
+            Value = dialtone_msg:truncate_value(unicode:characters_to_binary(maps:get(value, OkMap))),
             Extra = case OkMap of
                         #{ns := Ns} -> #{<<"ns">> => unicode:characters_to_binary(Ns)};
                         _ -> #{}
@@ -230,12 +246,6 @@ deliver_result(Req, ReplyTo, Result, #session{bstate = OldBState}) ->
                                     dialtone_err:to_wire(ErrMap)),
             OldBState
     end.
-
-truncate(Bin) when byte_size(Bin) > ?MAX_VALUE_BYTES ->
-    Head = binary:part(Bin, 0, ?MAX_VALUE_BYTES),
-    <<Head/binary, "... (value truncated by dialtone)">>;
-truncate(Bin) ->
-    Bin.
 
 next(#session{ephemeral = true, running = undefined} = State) ->
     %% One request served; this throwaway session is done.

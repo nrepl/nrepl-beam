@@ -19,13 +19,16 @@ all() ->
      syntax_error,
      runtime_error,
      unknown_op,
+     unsupported_backend_op,
      missing_code,
      stdout_streaming,
      stdout_before_done,
      stdin_roundtrip,
      stdin_eof,
      ls_sessions_and_close,
+     eval_after_close,
      ephemeral_eval,
+     ephemeral_sessions_stop,
      clone_inherits_bindings,
      concurrent_sessions,
      interrupt_running_eval,
@@ -110,8 +113,21 @@ bindings_persist(Config) ->
 
 multi_form_eval(Config) ->
     {Session, Client} = clone(?config(client, Config)),
-    {Msgs, _} = eval(Client, Session, <<"A = 1. B = A + 1. A + B.">>),
-    ?assertEqual(<<"3">>, value_of(Msgs)).
+    {Msgs, Client2} = eval(Client, Session, <<"A = 1. B = A + 1. A + B.">>),
+    %% one value per form, like the shell prints them
+    ?assertEqual([<<"1">>, <<"2">>, <<"3">>], [V || #{<<"value">> := V} <- Msgs]),
+    %% each value goes out as soon as its form is done, so it arrives in
+    %% step with the output
+    {Msgs2, Client3} = eval(Client2, Session, <<"io:format(\"a\"). io:format(\"b\").">>),
+    ?assertEqual([{out, <<"a">>}, {value, <<"ok">>}, {out, <<"b">>}, {value, <<"ok">>}],
+                 [case M of
+                      #{<<"out">> := O} -> {out, O};
+                      #{<<"value">> := V} -> {value, V}
+                  end || M <- Msgs2, is_map_key(<<"out">>, M) orelse is_map_key(<<"value">>, M)]),
+    %% an error in a later form doesn't swallow the earlier values
+    {Msgs3, _} = eval(Client3, Session, <<"1. 1 div 0.">>),
+    ?assertEqual([<<"1">>], [V || #{<<"value">> := V} <- Msgs3]),
+    ?assert(lists:member(<<"eval-error">>, statuses_of(Msgs3))).
 
 syntax_error(Config) ->
     {Session, Client} = clone(?config(client, Config)),
@@ -134,13 +150,36 @@ runtime_error(Config) ->
 unknown_op(Config) ->
     {[Resp], _} = dialtone_client:request(?config(client, Config),
                                           #{<<"op">> => <<"frobnicate">>}),
-    ?assertEqual([<<"unknown-op">>, <<"done">>], maps:get(<<"status">>, Resp)).
+    ?assertEqual([<<"unknown-op">>, <<"done">>], maps:get(<<"status">>, Resp)),
+    ?assertEqual(<<"frobnicate">>, maps:get(<<"op">>, Resp)).
+
+%% Ops a backend doesn't implement are answered by the session, and they
+%% echo the op too.
+unsupported_backend_op(_Config) ->
+    {ok, Server} = dialtone:start_server(#{port => 0, port_file => false,
+                                           backend => {dialtone_minimal_backend, #{}}}),
+    try
+        {Session, Client} = clone(dialtone_client:connect(dialtone:port(Server))),
+        {[Resp], _} = dialtone_client:request(Client, #{<<"op">> => <<"completions">>,
+                                                        <<"session">> => Session,
+                                                        <<"prefix">> => <<"li">>}),
+        ?assertEqual([<<"unknown-op">>, <<"done">>], maps:get(<<"status">>, Resp)),
+        ?assertEqual(<<"completions">>, maps:get(<<"op">>, Resp))
+    after
+        ok = dialtone:stop_server(Server)
+    end.
 
 missing_code(Config) ->
     {Session, Client} = clone(?config(client, Config)),
-    {Msgs, _} = dialtone_client:request(Client, #{<<"op">> => <<"eval">>,
-                                                  <<"session">> => Session}),
-    ?assert(lists:member(<<"eval-error">>, statuses_of(Msgs))).
+    {Msgs, Client2} = dialtone_client:request(Client, #{<<"op">> => <<"eval">>,
+                                                        <<"session">> => Session}),
+    ?assertEqual([<<"done">>, <<"no-code">>], statuses_of(Msgs)),
+    ?assertEqual([], [M || #{<<"err">> := _} = M <- Msgs]),
+    %% code that's there but isn't a string is a malformed request
+    {Msgs2, _} = dialtone_client:request(Client2, #{<<"op">> => <<"eval">>,
+                                                    <<"session">> => Session,
+                                                    <<"code">> => 42}),
+    ?assert(lists:member(<<"eval-error">>, statuses_of(Msgs2))).
 
 stdout_streaming(Config) ->
     {Session, Client} = clone(?config(client, Config)),
@@ -203,7 +242,7 @@ ls_sessions_and_close(Config) ->
     {[CloseResp], Client3} =
         dialtone_client:request(Client2, #{<<"op">> => <<"close">>,
                                            <<"session">> => Session}),
-    ?assertEqual([<<"done">>], maps:get(<<"status">>, CloseResp)),
+    ?assertEqual([<<"session-closed">>, <<"done">>], maps:get(<<"status">>, CloseResp)),
     %% registry cleanup is async (DOWN); poll briefly
     ok = wait_until(fun() ->
                             {[Ls2], _} = dialtone_client:request(
@@ -215,7 +254,21 @@ ls_sessions_and_close(Config) ->
     {[CloseResp2], _} =
         dialtone_client:request(Client3, #{<<"op">> => <<"close">>,
                                            <<"session">> => Session}),
-    ?assertEqual([<<"done">>], maps:get(<<"status">>, CloseResp2)).
+    ?assertEqual([<<"session-closed">>, <<"done">>], maps:get(<<"status">>, CloseResp2)).
+
+%% Once a client has seen session-closed, the session has to be gone: a
+%% request sent right after it gets unknown-session instead of hanging.
+eval_after_close(Config) ->
+    lists:foreach(
+      fun(_) ->
+              {Session, Client} = clone(?config(client, Config)),
+              {[_], Client2} = dialtone_client:request(Client, #{<<"op">> => <<"close">>,
+                                                                 <<"session">> => Session}),
+              {Msgs, _} = dialtone_client:request(Client2, #{<<"op">> => <<"eval">>,
+                                                             <<"session">> => Session,
+                                                             <<"code">> => <<"ok.">>}),
+              ?assert(lists:member(<<"unknown-session">>, statuses_of(Msgs)))
+      end, lists:seq(1, 25)).
 
 ephemeral_eval(Config) ->
     {Msgs, _} = dialtone_client:request(?config(client, Config),
@@ -306,7 +359,7 @@ close_mid_eval(Config) ->
     {DoomedMsgs, Client4} = dialtone_client:recv_until_done(Client3, <<"doomed">>, 5000),
     ?assert(lists:member(<<"interrupted">>, statuses_of(DoomedMsgs))),
     {CloseMsgs, _} = dialtone_client:recv_until_done(Client4, <<"closer">>, 5000),
-    ?assertEqual([<<"done">>], statuses_of(CloseMsgs)).
+    ?assertEqual([<<"done">>, <<"session-closed">>], statuses_of(CloseMsgs)).
 
 load_file_module(Config) ->
     {Session, Client} = clone(?config(client, Config)),
@@ -334,7 +387,21 @@ load_file_expressions(Config) ->
                   Client, #{<<"op">> => <<"load-file">>,
                             <<"session">> => Session,
                             <<"file">> => <<"A = 20, B = 22, A + B.">>}),
-    ?assertEqual(<<"42">>, value_of(Msgs)).
+    ?assertEqual(<<"42">>, value_of(Msgs)),
+    %% several forms still report only the last value, like nREPL
+    {Session2, Client2} = clone(?config(client, Config)),
+    {Msgs2, _} = dialtone_client:request(
+                   Client2, #{<<"op">> => <<"load-file">>,
+                              <<"session">> => Session2,
+                              <<"file">> => <<"X = 1. Y = 2. X + Y.">>}),
+    ?assertEqual(<<"3">>, value_of(Msgs2)),
+    %% a file with nothing but comments in it isn't an error
+    {Session3, Client3} = clone(?config(client, Config)),
+    {Msgs3, _} = dialtone_client:request(
+                   Client3, #{<<"op">> => <<"load-file">>,
+                              <<"session">> => Session3,
+                              <<"file">> => <<"%% just a comment\n">>}),
+    ?assertNot(lists:member(<<"eval-error">>, statuses_of(Msgs3))).
 
 load_file_compile_error(Config) ->
     {Session, Client} = clone(?config(client, Config)),
@@ -478,3 +545,21 @@ wait_until(Fun, N) ->
         true -> ok;
         false -> timer:sleep(20), wait_until(Fun, N - 1)
     end.
+
+%% Sessionless requests that don't start an eval mustn't leave their
+%% throwaway session behind.
+ephemeral_sessions_stop(Config) ->
+    Sessions = fun() ->
+                       length([P || P <- processes(),
+                                    proc_lib:translate_initial_call(P) =:=
+                                        {dialtone_session, init, 1}])
+               end,
+    Before = Sessions(),
+    lists:foreach(
+      fun(Req) ->
+              {_, _} = dialtone_client:request(?config(client, Config), Req)
+      end,
+      [#{<<"op">> => <<"eval">>},
+       #{<<"op">> => <<"completions">>, <<"prefix">> => <<"li">>},
+       #{<<"op">> => <<"lookup">>, <<"sym">> => <<"lists">>}]),
+    ok = wait_until(fun() -> Sessions() =< Before end).

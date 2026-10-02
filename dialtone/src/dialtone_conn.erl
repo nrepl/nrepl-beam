@@ -94,7 +94,7 @@ drain(Buffer, State) ->
 
 handle_message(Req, State) ->
     case maps:get(<<"op">>, Req, undefined) of
-        undefined -> send_self(dialtone_msg:response(Req, #{<<"status">> => ['unknown-op', done]}), State);
+        undefined -> send_self(dialtone_msg:unknown_op(Req), State);
         <<"describe">> -> describe(Req, State);
         <<"clone">> -> clone(Req, State);
         <<"ls-sessions">> -> ls_sessions(Req, State);
@@ -103,7 +103,7 @@ handle_message(Req, State) ->
                 Op =:= <<"interrupt">>; Op =:= <<"completions">>; Op =:= <<"lookup">> ->
             route_to_session(Req, State);
         _UnknownOp ->
-            send_self(dialtone_msg:response(Req, #{<<"status">> => ['unknown-op', done]}), State)
+            send_self(dialtone_msg:unknown_op(Req), State)
     end.
 
 describe(Req, #conn{backend = {BMod, _}} = State) ->
@@ -156,20 +156,22 @@ ls_sessions(Req, State) ->
               State).
 
 %% close is idempotent: closing an unknown (or absent) session still answers
-%% done. A live session tears down its own in-flight work and sends the done
+%% session-closed, so clients waiting for it (vim-fireplace) don't loop. A
+%% live session tears down its own in-flight work and sends the reply
 %% itself - routing close through the async request path like any other
 %% session op keeps message flow one-directional (conn never blocks on a
 %% session that might be blocking on the conn).
 close(Req, State) ->
     case maps:get(<<"session">>, Req, undefined) of
         undefined ->
-            send_self(dialtone_msg:response(Req, #{<<"status">> => [done]}), State);
+            send_self(dialtone_msg:response(Req, #{<<"status">> => ['session-closed', done]}),
+                      State);
         Id ->
             case dialtone_sessions:lookup(Id) of
                 {ok, Pid} ->
                     dialtone_session:request(Pid, Req, self());
                 error ->
-                    send_self(dialtone_msg:response(Req, #{<<"status">> => [done]}),
+                    send_self(dialtone_msg:response(Req, #{<<"status">> => ['session-closed', done]}),
                               State)
             end
     end.

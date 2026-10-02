@@ -11,12 +11,32 @@
 %% design, and results of an eval whose client went away have nowhere to go.
 -module(dialtone_msg).
 
--export([reply/3, reply_done/3, reply_done/4, send/2, response/2]).
+-export([reply/3, reply_done/3, reply_done/4, send/2, response/2, unknown_op/1,
+         truncate_value/1]).
+
+%% Crude safety net against a multi-gigabyte value taking the editor down;
+%% a proper client-negotiated print quota can replace it later.
+-define(MAX_VALUE_BYTES, 8 * 1024 * 1024).
 
 %% @doc Build a response map echoing id/session from the request.
 -spec response(map(), map()) -> map().
 response(Req, Extra) ->
     maps:merge(maps:with([<<"id">>, <<"session">>], Req), Extra).
+
+%% @doc The response to an op the server doesn't support. It echoes the op,
+%% which Calva uses to tell the user what's missing.
+-spec unknown_op(map()) -> map().
+unknown_op(Req) ->
+    response(Req, maps:merge(maps:with([<<"op">>], Req),
+                             #{<<"status">> => ['unknown-op', done]})).
+
+%% @doc Cut a rendered value down to a size clients can cope with.
+-spec truncate_value(binary()) -> binary().
+truncate_value(Bin) when byte_size(Bin) > ?MAX_VALUE_BYTES ->
+    Head = binary:part(Bin, 0, ?MAX_VALUE_BYTES),
+    <<Head/binary, "... (value truncated by dialtone)">>;
+truncate_value(Bin) ->
+    Bin.
 
 %% @doc Send an intermediate (non-terminal) response for a request.
 -spec reply(pid(), map(), map()) -> ok.

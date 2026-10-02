@@ -188,10 +188,13 @@ render_msg(Msg, #sh{render = R0} = State) ->
              #{<<"value">> := Value} -> print(chaser_render:value(Value, R1));
              _ -> R1
          end,
+    %% err on its own is the code's stderr, streamed like out; with an ex
+    %% it's the account of a failed eval.
     R3 = case Msg of
+             #{<<"ex">> := Ex} ->
+                 print(chaser_render:err(Ex, maps:get(<<"err">>, Msg, <<>>), R2));
              #{<<"err">> := Err} ->
-                 Summary = maps:get(<<"ex">>, Msg, <<"error">>),
-                 print(chaser_render:err(Summary, Err, R2));
+                 print(chaser_render:stderr(Err, R2));
              _ ->
                  R2
          end,

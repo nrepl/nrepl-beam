@@ -8,6 +8,9 @@
 main() ->
     Opts = parse_args(init:get_plain_arguments(), #{port => 0}),
     {ok, _} = application:ensure_all_started(dialtone),
+    %% A standalone server owns the node, so it can safely take over
+    %% standard_error and send evaluated code's writes to the client.
+    ok = dialtone:capture_stderr(),
     case dialtone:start_server(Opts) of
         {ok, _Server} ->
             timer:sleep(infinity);

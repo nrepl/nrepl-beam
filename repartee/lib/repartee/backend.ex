@@ -27,7 +27,11 @@ defmodule Repartee.Backend do
   end
 
   @impl true
-  def eval(code, meta, state) do
+  def eval(code, meta, state), do: eval(code, meta, state, true)
+
+  # emit_all? says whether the expressions before the last one report their
+  # values too.
+  defp eval(code, meta, state, emit_all?) do
     file = Map.get(meta, :file, "nrepl")
     line = Map.get(meta, :line, 1)
     column = Map.get(meta, :column, 1)
@@ -43,11 +47,7 @@ defmodule Repartee.Backend do
 
     case Code.string_to_quoted(code, quoted_opts) do
       {:ok, quoted} ->
-        # :prune_binding would keep only the variables this code reads or
-        # writes, and the session would lose the rest of them.
-        {value, binding, env} = Code.eval_quoted_with_env(quoted, state.binding, state.env)
-
-        {:ok, %{value: inspect(value, state.inspect_opts)}, %{state | binding: binding, env: env}}
+        eval_exprs(top_level(quoted), state, emit_all?)
 
       {:error, {location, message, token}} ->
         {:error, syntax_error(file, location, message, token), state}
@@ -57,7 +57,8 @@ defmodule Repartee.Backend do
   @impl true
   def load_file(contents, meta, state) do
     file = Map.get(meta, :path, Map.get(meta, :name, "nrepl-load-file"))
-    eval(contents, %{file: file, line: 1}, state)
+    # Like nREPL, load-file reports just the last expression's value.
+    eval(contents, %{file: file, line: 1}, state, false)
   end
 
   @impl true
@@ -96,6 +97,31 @@ defmodule Repartee.Backend do
         "version-string" => List.to_string(:erlang.system_info(:otp_release))
       }
     }
+  end
+
+  # Several top-level expressions parse into a block without metadata. A
+  # parenthesized block has some, and stays a single expression.
+  defp top_level({:__block__, [], [_ | _] = exprs}), do: exprs
+  defp top_level(quoted), do: [quoted]
+
+  # One expression at a time, like IEx, so each one gets a value. Values
+  # before the last go to the client right away.
+  defp eval_exprs([quoted], state, _emit_all?) do
+    {value, state} = eval_expr(quoted, state)
+    {:ok, %{value: inspect(value, state.inspect_opts)}, state}
+  end
+
+  defp eval_exprs([quoted | rest], state, emit_all?) do
+    {value, state} = eval_expr(quoted, state)
+    if emit_all?, do: :dialtone_backend.emit_value(inspect(value, state.inspect_opts))
+    eval_exprs(rest, state, emit_all?)
+  end
+
+  defp eval_expr(quoted, state) do
+    # :prune_binding would keep only the variables this code reads or
+    # writes, and the session would lose the rest of them.
+    {value, binding, env} = Code.eval_quoted_with_env(quoted, state.binding, state.env)
+    {value, %{state | binding: binding, env: env}}
   end
 
   defp syntax_error(file, location, message, token) do

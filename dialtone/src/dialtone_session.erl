@@ -102,8 +102,10 @@ handle_info({'DOWN', MRef, process, _Pid, Reason},
     %% an exit we didn't catch (from a linked process, exit(self(), kill),
     %% ...). Only the first is interrupted. State unchanged.
     ok = dialtone_io_server:reset(State#session.io),
-    case Running of
-        #{interrupted := true} ->
+    case {Running, Reason} of
+        %% A worker that died of something else before the interrupt's
+        %% kill reached it failed.
+        {#{interrupted := true}, killed} ->
             dialtone_msg:reply_done(ReplyTo, Req, [interrupted], #{});
         _ ->
             {BMod, _} = State#session.backend,

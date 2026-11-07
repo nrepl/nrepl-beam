@@ -25,7 +25,7 @@
                   running :: undefined
                            | #{req := map(), reply_to := pid(),
                                worker := pid(), mref := reference(),
-                               ref := reference()},
+                               ref := reference(), interrupted => true},
                   queue = queue:new() :: queue:queue({map(), pid()})}).
 
 start_link(Id, Backend, InitialBState) ->
@@ -97,16 +97,17 @@ handle_info({eval_result, Ref, Result},
     next(State#session{running = undefined, bstate = NewBState});
 handle_info({'DOWN', MRef, process, _Pid, Reason},
             #session{running = #{mref := MRef, req := Req,
-                                 reply_to := ReplyTo}} = State) ->
-    %% Worker died without reporting a result: killed (interrupt) or took an
-    %% exit we didn't catch (e.g. from a linked process). State unchanged.
+                                 reply_to := ReplyTo} = Running} = State) ->
+    %% Worker died without reporting a result: killed by an interrupt, or by
+    %% an exit we didn't catch (from a linked process, exit(self(), kill),
+    %% ...). Only the first is interrupted. State unchanged.
     ok = dialtone_io_server:reset(State#session.io),
-    case Reason of
-        killed ->
+    case Running of
+        #{interrupted := true} ->
             dialtone_msg:reply_done(ReplyTo, Req, [interrupted], #{});
-        Other ->
+        _ ->
             {BMod, _} = State#session.backend,
-            ErrMap = dialtone_err:render(BMod, exit, Other, [], State#session.bstate),
+            ErrMap = dialtone_err:render(BMod, exit, Reason, [], State#session.bstate),
             dialtone_msg:reply_done(ReplyTo, Req, ['eval-error'], ErrMap)
     end,
     next(State#session{running = undefined});
@@ -269,14 +270,14 @@ handle_interrupt(Req, ReplyTo, #session{running = undefined, queue = Q} = State)
             interrupt_queued(Req, ReplyTo, State)
     end;
 handle_interrupt(Req, ReplyTo,
-                 #session{running = #{req := RunningReq, worker := Worker}} = State) ->
+                 #session{running = #{req := RunningReq, worker := Worker} = Running} = State) ->
     RunningId = maps:get(<<"id">>, RunningReq, undefined),
     case maps:get(<<"interrupt-id">>, Req, RunningId) of
         RunningId ->
             exit(Worker, kill),
             %% The DOWN handler answers the interrupted eval; ack right away.
             dialtone_msg:reply_done(ReplyTo, Req, #{}),
-            State;
+            State#session{running = Running#{interrupted => true}};
         _Other ->
             case interrupt_queued_id(maps:get(<<"interrupt-id">>, Req), State) of
                 {found, State2} ->

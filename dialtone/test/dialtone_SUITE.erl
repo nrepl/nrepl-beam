@@ -18,6 +18,7 @@ all() ->
      multi_form_eval,
      syntax_error,
      runtime_error,
+     eval_killed,
      unknown_op,
      unsupported_backend_op,
      missing_code,
@@ -150,6 +151,17 @@ runtime_error(Config) ->
     ?assertEqual(<<"error:badarith">>, maps:get(<<"ex">>, ErrMsg)),
     ?assertMatch({_, _}, binary:match(maps:get(<<"err">>, ErrMsg), <<"arithmetic">>)),
     %% a failed eval must not wedge the session
+    {Msgs2, _} = eval(?config(client, Config), Session, <<"ok.">>),
+    ?assertEqual(<<"ok">>, value_of(Msgs2)).
+
+%% Only an interrupt makes an eval interrupted. A worker that gets killed
+%% some other way failed.
+eval_killed(Config) ->
+    {Session, Client} = clone(?config(client, Config)),
+    {Msgs, _} = eval(Client, Session, <<"exit(self(), kill).">>),
+    Statuses = statuses_of(Msgs),
+    ?assert(lists:member(<<"eval-error">>, Statuses)),
+    ?assertNot(lists:member(<<"interrupted">>, Statuses)),
     {Msgs2, _} = eval(?config(client, Config), Session, <<"ok.">>),
     ?assertEqual(<<"ok">>, value_of(Msgs2)).
 

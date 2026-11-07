@@ -470,7 +470,26 @@ lookup_function_docs(Config) ->
     %% OTP 26 ships name/arity ("map/2"). Either is a usable arglist string.
     ?assertMatch(<<"map", _/binary>>, maps:get(<<"arglists-str">>, Info)),
     ?assert(is_integer(maps:get(<<"line">>, Info))),
-    ?assertMatch({_, _}, binary:match(maps:get(<<"doc">>, Info), <<"Takes a function">>)).
+    %% Some OTP builds have no docs to show (hex's OTP 26 for Ubuntu 26.04
+    %% marks every function's doc hidden).
+    case has_doc(lists, map, 2) of
+        true ->
+            ?assertMatch({_, _}, binary:match(maps:get(<<"doc">>, Info), <<"Takes a function">>));
+        false ->
+            ok
+    end.
+
+has_doc(M, F, A) ->
+    case code:get_doc(M) of
+        {ok, {docs_v1, _, _, _, _, _, Docs}} ->
+            lists:any(fun({{function, F1, A1}, _, _, Doc, _}) ->
+                              {F1, A1} =:= {F, A} andalso is_map(Doc);
+                         (_) ->
+                              false
+                      end, Docs);
+        _ ->
+            false
+    end.
 
 %% Lookup on a module we just load-file'd: no doc chunk, so existence comes
 %% from exports and the line from the debug_info chunk.

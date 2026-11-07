@@ -1,6 +1,6 @@
 {application, dialtone,
  [{description, "A spec-faithful nREPL server for the BEAM"},
-  {vsn, "0.1.0"},
+  {vsn, "0.2.0"},
   {registered,
    [dialtone_sup,
     dialtone_sessions,

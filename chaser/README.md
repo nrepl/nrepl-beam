@@ -12,7 +12,7 @@ the client side of the bar, next to CIDER, Port and neat.
 
 ```
 $ chaser                       # picks up .nrepl-port automatically
-chaser 0.1.0 | nrepl://127.0.0.1:51234 | dialtone 0.1.0 / erlang 29
+chaser 0.2.0 | nrepl://127.0.0.1:51234 | dialtone 0.2.0 / erlang 29
 127.0.0.1:51234> io:format("computing~n"), 6 * 7.
 computing
 => 42

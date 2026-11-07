@@ -16,6 +16,7 @@ all() ->
      clone_and_eval,
      bindings_persist,
      multi_form_eval,
+     multi_form_error_keeps_bindings,
      syntax_error,
      runtime_error,
      eval_killed,
@@ -135,6 +136,16 @@ multi_form_eval(Config) ->
     {Msgs3, _} = eval(Client3, Session, <<"1. 1 div 0.">>),
     ?assertEqual([<<"1">>], [V || #{<<"value">> := V} <- Msgs3]),
     ?assert(lists:member(<<"eval-error">>, statuses_of(Msgs3))).
+
+%% The forms before the one that fails keep their bindings, which the
+%% client has already seen the values of.
+multi_form_error_keeps_bindings(Config) ->
+    {Session, Client} = clone(?config(client, Config)),
+    {Msgs, _} = eval(Client, Session, <<"Kept = 1. error(proof).">>),
+    ?assertEqual([<<"1">>], [V || #{<<"value">> := V} <- Msgs]),
+    ?assert(lists:member(<<"eval-error">>, statuses_of(Msgs))),
+    {Msgs2, _} = eval(?config(client, Config), Session, <<"Kept.">>),
+    ?assertEqual(<<"1">>, value_of(Msgs2)).
 
 syntax_error(Config) ->
     {Session, Client} = clone(?config(client, Config)),

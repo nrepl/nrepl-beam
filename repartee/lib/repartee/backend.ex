@@ -114,7 +114,14 @@ defmodule Repartee.Backend do
   defp eval_exprs([quoted | rest], state, emit_all?) do
     {value, state} = eval_expr(quoted, state)
     if emit_all?, do: :dialtone_backend.emit_value(inspect(value, state.inspect_opts))
-    eval_exprs(rest, state, emit_all?)
+
+    # A later expression that fails keeps what this one did, as the
+    # client may already have its value.
+    try do
+      eval_exprs(rest, state, emit_all?)
+    catch
+      kind, reason -> {:error, format_exception(kind, reason, __STACKTRACE__, state), state}
+    end
   end
 
   defp eval_expr(quoted, state) do

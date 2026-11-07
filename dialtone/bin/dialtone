@@ -7,4 +7,4 @@ EBIN="$DIR/_build/default/lib/dialtone/ebin"
 if [ ! -d "$EBIN" ]; then
     (cd "$DIR" && rebar3 compile >/dev/null) || exit 1
 fi
-exec erl -noshell -pa "$EBIN" -eval 'dialtone_cli:main()' -extra "$@"
+exec erl +pc unicode -noshell -pa "$EBIN" -eval 'dialtone_cli:main()' -extra "$@"

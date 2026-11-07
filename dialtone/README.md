@@ -95,7 +95,10 @@ construction. See `dialtone_backend_erlang` and repartee's
 
 - `logger` output goes to the server's console, not the client. Eval
   errors themselves are reported to the client with full stack traces.
-- Values are rendered with `~tp` and truncated beyond 8 MB.
+- Values are rendered with `~tp` and truncated beyond 8 MB. `~tp` shows
+  UTF-8 binaries and strings as text only on a node started with
+  `+pc unicode`, which `bin/dialtone` does. An embedded server prints
+  them the way your node does.
 
 ## Development
 

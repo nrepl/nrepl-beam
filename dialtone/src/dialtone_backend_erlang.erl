@@ -393,7 +393,15 @@ eval_forms([Exprs | Rest], Bindings0, State, EmitAll) ->
         true -> dialtone_backend:emit_value(format_value(Value));
         false -> ok
     end,
-    eval_forms(Rest, Bindings, State, EmitAll).
+    %% A later form that fails keeps the bindings of this one, as they
+    %% would be in the shell, where each form is a line of its own.
+    try
+        eval_forms(Rest, Bindings, State, EmitAll)
+    catch
+        Class:Reason:Stack ->
+            {error, dialtone_err:render(?MODULE, Class, Reason, Stack, State),
+             State#{bindings := Bindings}}
+    end.
 
 format_value(Value) ->
     io_lib:format("~tp", [Value]).

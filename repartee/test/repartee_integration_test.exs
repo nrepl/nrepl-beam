@@ -52,6 +52,15 @@ defmodule Repartee.IntegrationTest do
     assert values_of(msgs) == ["3"]
   end
 
+  test "a failing expression keeps what the ones before it did", %{client: client} do
+    {session, client} = clone(client)
+    {msgs, client} = eval(client, session, ~s|y = 1\nraise "boom"|)
+    assert values_of(msgs) == ["1"]
+    assert "eval-error" in statuses_of(msgs)
+    {msgs, _} = eval(client, session, "y")
+    assert value_of(msgs) == "1"
+  end
+
   test "load-file sends only the last value", %{client: client} do
     {msgs, _} =
       Client.request(client, %{

@@ -43,8 +43,9 @@ defmodule Repartee.Backend do
 
     case Code.string_to_quoted(code, quoted_opts) do
       {:ok, quoted} ->
-        {value, binding, env} =
-          Code.eval_quoted_with_env(quoted, state.binding, state.env, prune_binding: true)
+        # :prune_binding would keep only the variables this code reads or
+        # writes, and the session would lose the rest of them.
+        {value, binding, env} = Code.eval_quoted_with_env(quoted, state.binding, state.env)
 
         {:ok, %{value: inspect(value, state.inspect_opts)}, %{state | binding: binding, env: env}}
 

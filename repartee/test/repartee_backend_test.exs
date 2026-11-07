@@ -20,6 +20,13 @@ defmodule Repartee.BackendTest do
     assert value == "42"
   end
 
+  test "variables survive evals that don't use them" do
+    {_, state} = eval!("x = 41", init_state())
+    {_, state} = eval!("y = 1", state)
+    {value, _} = eval!("x + y", state)
+    assert value == "42"
+  end
+
   test "aliases persist across evals" do
     {_, state} = eval!("alias String, as: S", init_state())
     {value, _} = eval!(~s|S.upcase("neat")|, state)

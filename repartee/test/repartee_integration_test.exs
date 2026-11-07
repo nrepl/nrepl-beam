@@ -76,16 +76,16 @@ defmodule Repartee.IntegrationTest do
     :ok = :dialtone.capture_stderr()
     on_exit(fn -> Supervisor.terminate_child(:dialtone_sup, :dialtone_stderr) end)
     {session, client} = clone(client)
-    {msgs, _} = eval(client, session, ~s|IO.write(:stderr, "oops")|)
+    {msgs, _} = eval(client, session, ~s|IO.write(:stderr, "oops")\n:done|)
     assert Enum.map_join(msgs, &Map.get(&1, "err", "")) == "oops"
-    assert value_of(msgs) == ":ok"
+    assert values_of(msgs) == [":ok", ":done"]
   end
 
   test "streams stdout", %{client: client} do
     {session, client} = clone(client)
-    {msgs, _} = eval(client, session, ~s|IO.puts("здравей")|)
+    {msgs, _} = eval(client, session, ~s|IO.puts("здравей")\n:done|)
     assert out_of(msgs) == "здравей\n"
-    assert value_of(msgs) == ":ok"
+    assert values_of(msgs) == [":ok", ":done"]
   end
 
   test "stdin roundtrip via IO.gets", %{client: client} do

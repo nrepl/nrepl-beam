@@ -2,7 +2,7 @@ defmodule Repartee.IntegrationTest do
   use ExUnit.Case
 
   import Repartee.NreplClient,
-    only: [value_of: 1, out_of: 1, statuses_of: 1]
+    only: [value_of: 1, values_of: 1, out_of: 1, statuses_of: 1]
 
   alias Repartee.NreplClient, as: Client
 
@@ -44,18 +44,37 @@ defmodule Repartee.IntegrationTest do
     assert value_of(msgs) == "43"
   end
 
+  test "each top-level expression gets a value", %{client: client} do
+    {session, client} = clone(client)
+    {msgs, client} = eval(client, session, "x = 1\nx + 1")
+    assert values_of(msgs) == ["1", "2"]
+    {msgs, _} = eval(client, session, "(x; x + 2)")
+    assert values_of(msgs) == ["3"]
+  end
+
+  test "load-file sends only the last value", %{client: client} do
+    {msgs, _} =
+      Client.request(client, %{
+        "op" => "load-file",
+        "file" => "a = 2\na * 21",
+        "file-name" => "x.exs"
+      })
+
+    assert values_of(msgs) == ["42"]
+  end
+
   test "captures stderr when asked to", %{client: client} do
     :ok = :dialtone.capture_stderr()
     on_exit(fn -> Supervisor.terminate_child(:dialtone_sup, :dialtone_stderr) end)
     {session, client} = clone(client)
-    {msgs, _} = eval(client, session, ~s|IO.write(:stderr, "oops")\n:ok|)
+    {msgs, _} = eval(client, session, ~s|IO.write(:stderr, "oops")|)
     assert Enum.map_join(msgs, &Map.get(&1, "err", "")) == "oops"
     assert value_of(msgs) == ":ok"
   end
 
   test "streams stdout", %{client: client} do
     {session, client} = clone(client)
-    {msgs, _} = eval(client, session, ~s|IO.puts("здравей")\n:ok|)
+    {msgs, _} = eval(client, session, ~s|IO.puts("здравей")|)
     assert out_of(msgs) == "здравей\n"
     assert value_of(msgs) == ":ok"
   end

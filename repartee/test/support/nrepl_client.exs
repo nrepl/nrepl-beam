@@ -53,9 +53,11 @@ defmodule Repartee.NreplClient do
   end
 
   def value_of(msgs) do
-    [value] = for %{"value" => v} <- msgs, do: v
+    [value] = values_of(msgs)
     value
   end
+
+  def values_of(msgs), do: for(%{"value" => v} <- msgs, do: v)
 
   def out_of(msgs) do
     Enum.map_join(for(%{"out" => o} <- msgs, do: o), "", & &1)
